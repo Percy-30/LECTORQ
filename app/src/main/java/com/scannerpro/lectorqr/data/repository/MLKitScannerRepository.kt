@@ -1,10 +1,15 @@
 package com.scannerpro.lectorqr.data.repository
 
+import android.util.Log
+
 import android.content.Context
 import android.net.Uri
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Rect
 import com.scannerpro.lectorqr.data.local.dao.ScanDao
 import com.scannerpro.lectorqr.data.local.entity.toEntity
 import com.scannerpro.lectorqr.domain.model.BarcodeResult
@@ -25,7 +30,7 @@ class MLKitScannerRepository @Inject constructor(
         .build()
 
     private val scanner = BarcodeScanning.getClient(scannerOptions)
-    private val scanResults = MutableSharedFlow<BarcodeResult>(replay = 0)
+    private val scanResults = MutableSharedFlow<BarcodeResult>(replay = 1)
 
     override fun startScanning(): Flow<BarcodeResult> {
         return scanResults
@@ -66,24 +71,72 @@ class MLKitScannerRepository @Inject constructor(
     }
 
     override suspend fun processImageFromGallery(uri: Uri): BarcodeResult? {
+        Log.e("ScannerRepo", "processImageFromGallery: uri=$uri")
         return try {
-            val image = InputImage.fromFilePath(context, uri)
+            val inputStream = context.contentResolver.openInputStream(uri)
+            val fullBitmap = BitmapFactory.decodeStream(inputStream) ?: run {
+                Log.e("ScannerRepo", "failed to decode bitmap from uri")
+                return null
+            }
+            
+            Log.e("ScannerRepo", "image loaded, size: ${fullBitmap.width}x${fullBitmap.height}")
+            val image = InputImage.fromBitmap(fullBitmap, 0)
             val barcodes = scanner.process(image).await()
+            Log.e("ScannerRepo", "ML Kit processing done, detected ${barcodes.size} barcodes")
+            
             if (barcodes.isNotEmpty()) {
                 val barcode = barcodes[0]
+                Log.e("ScannerRepo", "Detected barcode: ${barcode.displayValue}")
+                
+                // Crop the QR area if possible
+                val croppedBitmap = barcode.boundingBox?.let { box ->
+                    try {
+                        // Ensure bounds are within bitmap
+                        val left = box.left.coerceAtLeast(0)
+                        val top = box.top.coerceAtLeast(0)
+                        val width = box.width().coerceAtMost(fullBitmap.width - left)
+                        val height = box.height().coerceAtMost(fullBitmap.height - top)
+                        
+                        if (width > 0 && height > 0) {
+                            Bitmap.createBitmap(fullBitmap, left, top, width, height)
+                        } else fullBitmap
+                    } catch (e: Exception) {
+                        Log.e("ScannerRepo", "Cropping failed", e)
+                        fullBitmap
+                    }
+                } ?: fullBitmap
+
+                val imagePath = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    saveBitmap(croppedBitmap)
+                }
+
                 val result = BarcodeResult(
                     displayValue = barcode.displayValue,
                     rawValue = barcode.rawValue,
                     format = barcode.format,
-                    type = barcode.valueType
+                    type = barcode.valueType,
+                    timestamp = System.currentTimeMillis(),
+                    imagePath = imagePath
                 )
+                
                 // Record in history and get ID
-                val insertedId = scanDao.insertScan(result.toEntity())
-                result.copy(id = insertedId)
+                val insertedId = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    scanDao.insertScan(result.toEntity())
+                }
+                
+                val finalResult = result.copy(id = insertedId)
+                
+                Log.e("ScannerRepo", "Emitting result to flow: $finalResult")
+                // CRITICAL: Emit to flow so UI shows overlay instantly
+                scanResults.emit(finalResult)
+                
+                finalResult
             } else {
+                Log.e("ScannerRepo", "No barcodes detected in image")
                 null
             }
         } catch (e: Exception) {
+            Log.e("ScannerRepo", "Error processing image from gallery", e)
             null
         }
     }
@@ -91,4 +144,18 @@ class MLKitScannerRepository @Inject constructor(
     override fun toggleFlash(isEnabled: Boolean) {}
 
     override fun flipCamera() {}
+
+    override suspend fun processBarcodeManually(barcode: com.google.mlkit.vision.barcode.common.Barcode, bitmap: android.graphics.Bitmap?): BarcodeResult? {
+        val imagePath = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            bitmap?.let { saveBitmap(it) }
+        }
+        return BarcodeResult(
+            displayValue = barcode.displayValue,
+            rawValue = barcode.rawValue,
+            format = barcode.format,
+            type = barcode.valueType,
+            imagePath = imagePath,
+            customName = "Texto"
+        )
+    }
 }

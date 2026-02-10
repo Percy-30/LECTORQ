@@ -17,7 +17,8 @@ import javax.inject.Inject
 
 data class FavoritesUiState(
     val scans: List<BarcodeResult> = emptyList(),
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val isPremium: Boolean = false
 )
 
 @HiltViewModel
@@ -25,7 +26,8 @@ class FavoritesViewModel @Inject constructor(
     private val getFavoritesUseCase: GetFavoritesUseCase,
     private val toggleFavoriteUseCase: ToggleFavoriteUseCase,
     private val deleteScanUseCase: DeleteScanUseCase,
-    private val updateScanNameUseCase: UpdateScanNameUseCase
+    private val updateScanNameUseCase: UpdateScanNameUseCase,
+    private val settingsRepository: com.scannerpro.lectorqr.domain.repository.ISettingsRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(FavoritesUiState())
@@ -33,6 +35,15 @@ class FavoritesViewModel @Inject constructor(
 
     init {
         loadFavorites()
+        observePremiumStatus()
+    }
+
+    private fun observePremiumStatus() {
+        viewModelScope.launch {
+            settingsRepository.isPremium.collect { premium ->
+                _uiState.update { it.copy(isPremium = premium) }
+            }
+        }
     }
 
     private fun loadFavorites() {

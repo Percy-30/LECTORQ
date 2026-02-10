@@ -23,7 +23,8 @@ import java.time.format.DateTimeFormatter
 
 data class HistoryUiState(
     val groupedScans: Map<String, List<BarcodeResult>> = emptyMap(),
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val isPremium: Boolean = false
 )
 
 @HiltViewModel
@@ -32,7 +33,8 @@ class HistoryViewModel @Inject constructor(
     private val clearHistoryUseCase: ClearHistoryUseCase,
     private val toggleFavoriteUseCase: ToggleFavoriteUseCase,
     private val deleteScanUseCase: DeleteScanUseCase,
-    private val updateScanNameUseCase: UpdateScanNameUseCase
+    private val updateScanNameUseCase: UpdateScanNameUseCase,
+    private val settingsRepository: com.scannerpro.lectorqr.domain.repository.ISettingsRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HistoryUiState())
@@ -40,6 +42,15 @@ class HistoryViewModel @Inject constructor(
 
     init {
         loadHistory()
+        observePremiumStatus()
+    }
+
+    private fun observePremiumStatus() {
+        viewModelScope.launch {
+            settingsRepository.isPremium.collect { premium ->
+                _uiState.update { it.copy(isPremium = premium) }
+            }
+        }
     }
 
     private fun loadHistory() {

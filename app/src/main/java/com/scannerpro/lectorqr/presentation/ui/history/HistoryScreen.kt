@@ -43,93 +43,98 @@ fun HistoryScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Historial", color = Color.White) },
+                title = { Text("Historial", color = MaterialTheme.colorScheme.onPrimary) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onPrimary)
                     }
                 },
                 actions = {
                     IconButton(onClick = { /* TODO: Toggle filter? */ }) {
-                        Icon(Icons.Default.FilterList, contentDescription = "Filter", tint = Color.White)
+                        Icon(Icons.Default.FilterList, contentDescription = "Filter", tint = MaterialTheme.colorScheme.onPrimary)
                     }
                     Box {
                         IconButton(onClick = { showMenu = true }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "More", tint = Color.White)
+                            Icon(Icons.Default.MoreVert, contentDescription = "More", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                         DropdownMenu(
                             expanded = showMenu,
                             onDismissRequest = { showMenu = false },
-                            containerColor = Color(0xFF333333)
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Eliminar todo", color = Color.White) },
-                                leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color.White) },
+                                text = { Text("Eliminar todo", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                                 onClick = {
                                     showMenu = false
                                     viewModel.clearHistory()
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("CSV", color = Color.White) },
-                                leadingIcon = { Icon(Icons.Default.FileUpload, contentDescription = null, tint = Color.White) },
+                                text = { Text("CSV", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                leadingIcon = { Icon(Icons.Default.FileUpload, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                                 onClick = { showMenu = false }
                             )
                             DropdownMenuItem(
-                                text = { Text("TXT", color = Color.White) },
-                                leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null, tint = Color.White) },
+                                text = { Text("TXT", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                                 onClick = { showMenu = false }
                             )
                         }
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF2196F3))
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.primary)
             )
         },
-        containerColor = Color(0xFF121212)
+        containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
-        if (uiState.groupedScans.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.Center) {
-                Text("No hay historial aún", color = Color.Gray)
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .padding(paddingValues)
-                    .fillMaxSize()
-            ) {
-                uiState.groupedScans.forEach { (date, scans) ->
-                    stickyHeader {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(Color(0xFF1A1A1A))
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Text(
-                                text = date,
-                                color = Color.Gray,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+        Column(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
+            Box(modifier = Modifier.weight(1f)) {
+                if (uiState.groupedScans.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("No hay historial aún", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    items(scans) { scan ->
-                        HistoryItem(
-                            scan = scan, 
-                            onClick = { onResultSelected(scan) },
-                            onToggleFavorite = { viewModel.toggleFavorite(scan.id, scan.isFavorite) },
-                            onDelete = { viewModel.deleteScan(scan.id) },
-                            onRename = { 
-                                renameScanId = scan.id
-                                renameInput = scan.customName ?: "Texto"
-                                showRenameDialog = true
+                } else {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        uiState.groupedScans.forEach { (date, scans) ->
+                            stickyHeader {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        text = date,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
-                        )
-                        Divider(color = Color(0xFF333333), thickness = 0.5.dp)
+                            items(scans) { scan ->
+                                HistoryItem(
+                                    scan = scan, 
+                                    onClick = { onResultSelected(scan) },
+                                    onToggleFavorite = { viewModel.toggleFavorite(scan.id, scan.isFavorite) },
+                                    onDelete = { viewModel.deleteScan(scan.id) },
+                                    onRename = { 
+                                        renameScanId = scan.id
+                                        renameInput = scan.customName ?: "Texto"
+                                        showRenameDialog = true
+                                    }
+                                )
+                                Divider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
+                            }
+                        }
                     }
                 }
             }
+
+            // Banner Ad at the bottom
+            com.scannerpro.lectorqr.presentation.ui.components.BannerAdView(
+                modifier = Modifier.fillMaxWidth()
+            )
         }
 
         if (showRenameDialog) {
@@ -142,11 +147,11 @@ fun HistoryScreen(
                         onValueChange = { renameInput = it },
                         singleLine = true,
                         colors = TextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                             focusedContainerColor = Color.Transparent,
                             unfocusedContainerColor = Color.Transparent,
-                            cursorColor = Color(0xFF2196F3)
+                            cursorColor = MaterialTheme.colorScheme.primary
                         )
                     )
                 },
@@ -155,17 +160,17 @@ fun HistoryScreen(
                         viewModel.updateName(renameScanId, renameInput)
                         showRenameDialog = false
                     }) {
-                        Text("Guardar", color = Color(0xFF2196F3))
+                        Text("Guardar", color = MaterialTheme.colorScheme.primary)
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showRenameDialog = false }) {
-                        Text("Cancelar", color = Color.Gray)
+                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
-                containerColor = Color(0xFF333333),
-                titleContentColor = Color.White,
-                textContentColor = Color.White
+                containerColor = MaterialTheme.colorScheme.surface,
+                titleContentColor = MaterialTheme.colorScheme.onSurface,
+                textContentColor = MaterialTheme.colorScheme.onSurface
             )
         }
     }
@@ -199,7 +204,7 @@ fun HistoryItem(
             Icon(
                 imageVector = Icons.Default.TextFields,
                 contentDescription = null,
-                tint = Color.White,
+                tint = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.size(24.dp)
             )
         }
@@ -208,19 +213,19 @@ fun HistoryItem(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = scan.customName ?: "Texto",
-                color = Color.White,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.Bold,
                 fontSize = 16.sp,
                 maxLines = 1
             )
             Text(
                 text = "$dateString, QR_CODE",
-                color = Color.Gray,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp
             )
             Text(
                 text = scan.displayValue ?: "",
-                color = Color.Gray,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp,
                 maxLines = 1,
                 modifier = Modifier.padding(top = 2.dp)
@@ -231,7 +236,7 @@ fun HistoryItem(
             Icon(
                 imageVector = if (scan.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
                 contentDescription = "Favorite",
-                tint = if (scan.isFavorite) Color(0xFF2196F3) else Color.Gray,
+                tint = if (scan.isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(24.dp)
             )
         }
@@ -241,26 +246,26 @@ fun HistoryItem(
                 Icon(
                     imageVector = Icons.Default.MoreVert,
                     contentDescription = "More",
-                    tint = Color.Gray,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(24.dp)
                 )
             }
             DropdownMenu(
                 expanded = showMenu,
                 onDismissRequest = { showMenu = false },
-                containerColor = Color(0xFF333333)
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
             ) {
                 DropdownMenuItem(
-                    text = { Text("Eliminar", color = Color.White) },
-                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color.White) },
+                    text = { Text("Eliminar", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                     onClick = {
                         showMenu = false
                         onDelete()
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("TXT", color = Color.White) },
-                    leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null, tint = Color.White) },
+                    text = { Text("TXT", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                     onClick = {
                         showMenu = false
                         val sendIntent = Intent().apply {
@@ -272,8 +277,8 @@ fun HistoryItem(
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("CSV", color = Color.White) },
-                    leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null, tint = Color.White) },
+                    text = { Text("CSV", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                     onClick = {
                         showMenu = false
                         val csv = "${scan.customName},${dateString},${scan.displayValue}"
@@ -286,8 +291,8 @@ fun HistoryItem(
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("Compartir", color = Color.White) },
-                    leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = Color.White) },
+                    text = { Text("Compartir", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                     onClick = {
                         showMenu = false
                         val sendIntent = Intent().apply {
@@ -299,16 +304,16 @@ fun HistoryItem(
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("Copiar", color = Color.White) },
-                    leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null, tint = Color.White) },
+                    text = { Text("Copiar", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                     onClick = {
                         showMenu = false
                         clipboardManager.setText(AnnotatedString(scan.displayValue ?: ""))
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("Renombrar", color = Color.White) },
-                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = Color.White) },
+                    text = { Text("Renombrar", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                     onClick = {
                         showMenu = false
                         onRename()

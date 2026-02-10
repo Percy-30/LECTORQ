@@ -2,6 +2,7 @@ package com.scannerpro.lectorqr.data.repository
 
 import com.scannerpro.lectorqr.data.local.dao.ScanDao
 import com.scannerpro.lectorqr.data.local.entity.toDomain
+import com.scannerpro.lectorqr.data.local.entity.toEntity
 import com.scannerpro.lectorqr.domain.model.BarcodeResult
 import com.scannerpro.lectorqr.domain.repository.IHistoryRepository
 import kotlinx.coroutines.flow.Flow
@@ -27,6 +28,9 @@ class RoomHistoryRepository @Inject constructor(
         scanDao.getScanById(id)?.toDomain()
 
     override suspend fun deleteScan(id: Long) = scanDao.deleteById(id)
+
+    override suspend fun insertScan(scan: BarcodeResult): Long = 
+        scanDao.insertScan(scan.toEntity())
 
     override suspend fun clearHistory() = scanDao.clearHistory()
 }

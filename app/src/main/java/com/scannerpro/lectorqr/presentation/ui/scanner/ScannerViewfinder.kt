@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -26,6 +27,8 @@ fun ScannerViewfinder() {
         label = "lineOffset"
     )
 
+    val cornerColor = MaterialTheme.colorScheme.primary
+    
     Canvas(modifier = Modifier.fillMaxSize()) {
         val width = size.width
         val height = size.height
@@ -48,7 +51,6 @@ fun ScannerViewfinder() {
 
         val cornerLength = 40.dp.toPx()
         val strokeWidth = 6.dp.toPx()
-        val cornerColor = Color(0xFF2196F3) 
 
         // Top Left
         drawLine(cornerColor, Offset(left - strokeWidth/2, top), Offset(left + cornerLength, top), strokeWidth)

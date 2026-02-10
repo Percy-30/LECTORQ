@@ -35,42 +35,47 @@ fun FavoritesScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Favoritos", color = Color.White) },
+                title = { Text("Favoritos", color = MaterialTheme.colorScheme.onPrimary) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onPrimary)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF2196F3))
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.primary)
             )
         },
-        containerColor = Color(0xFF121212)
+        containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
-        if (uiState.scans.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.Center) {
-                Text("No hay favoritos aún", color = Color.Gray)
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .padding(paddingValues)
-                    .fillMaxSize()
-            ) {
-                items(uiState.scans) { scan ->
-                    HistoryItem(
-                        scan = scan, 
-                        onClick = { onResultSelected(scan) },
-                        onToggleFavorite = { viewModel.toggleFavorite(scan) },
-                        onDelete = { viewModel.deleteScan(scan.id) },
-                        onRename = { 
-                            renameScanId = scan.id
-                            renameInput = scan.customName ?: "Texto"
-                            showRenameDialog = true
+        Column(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
+            Box(modifier = Modifier.weight(1f)) {
+                if (uiState.scans.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("No hay favoritos aún", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        items(uiState.scans) { scan ->
+                            HistoryItem(
+                                scan = scan, 
+                                onClick = { onResultSelected(scan) },
+                                onToggleFavorite = { viewModel.toggleFavorite(scan) },
+                                onDelete = { viewModel.deleteScan(scan.id) },
+                                onRename = { 
+                                    renameScanId = scan.id
+                                    renameInput = scan.customName ?: "Texto"
+                                    showRenameDialog = true
+                                }
+                            )
+                            Divider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
                         }
-                    )
-                    Divider(color = Color(0xFF333333), thickness = 0.5.dp)
+                    }
                 }
             }
+            
+            // Banner Ad
+            com.scannerpro.lectorqr.presentation.ui.components.BannerAdView(
+                modifier = Modifier.fillMaxWidth()
+            )
         }
 
         if (showRenameDialog) {
@@ -83,11 +88,11 @@ fun FavoritesScreen(
                         onValueChange = { renameInput = it },
                         singleLine = true,
                         colors = TextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                             focusedContainerColor = Color.Transparent,
                             unfocusedContainerColor = Color.Transparent,
-                            cursorColor = Color(0xFF2196F3)
+                            cursorColor = MaterialTheme.colorScheme.primary
                         )
                     )
                 },
@@ -96,17 +101,17 @@ fun FavoritesScreen(
                         viewModel.updateName(renameScanId, renameInput)
                         showRenameDialog = false
                     }) {
-                        Text("Guardar", color = Color(0xFF2196F3))
+                        Text("Guardar", color = MaterialTheme.colorScheme.primary)
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showRenameDialog = false }) {
-                        Text("Cancelar", color = Color.Gray)
+                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
-                containerColor = Color(0xFF333333),
-                titleContentColor = Color.White,
-                textContentColor = Color.White
+                containerColor = MaterialTheme.colorScheme.surface,
+                titleContentColor = MaterialTheme.colorScheme.onSurface,
+                textContentColor = MaterialTheme.colorScheme.onSurface
             )
         }
     }

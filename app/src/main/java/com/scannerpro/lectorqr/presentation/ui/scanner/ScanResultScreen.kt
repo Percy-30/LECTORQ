@@ -12,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.scannerpro.lectorqr.domain.model.BarcodeResult
+import com.scannerpro.lectorqr.presentation.ui.components.BannerAdView
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -42,8 +44,8 @@ fun ScanResultScreen(
     }
 
     if (uiState.isLoading || uiState.result == null) {
-        Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1A1A1A)), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = Color(0xFF2196F3))
+        Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         }
     } else {
         ScanResultContent(
@@ -53,7 +55,14 @@ fun ScanResultScreen(
             onOpenRename = { viewModel.openRenameDialog() },
             onCloseRename = { viewModel.closeRenameDialog() },
             onSaveName = { viewModel.saveName() },
-            onRenameInputChange = { viewModel.updateRenameInput(it) }
+            onRenameInputChange = { viewModel.updateRenameInput(it) },
+            onDelete = { 
+                viewModel.deleteScan()
+                onBack()
+            },
+            onExportTxt = { viewModel.exportAsTxt() },
+            onExportCsv = { viewModel.exportAsCsv() },
+            onGetSearchUrl = { viewModel.getSearchUrl(it) }
         )
     }
 }
@@ -67,10 +76,15 @@ fun ScanResultContent(
     onOpenRename: () -> Unit,
     onCloseRename: () -> Unit,
     onSaveName: () -> Unit,
-    onRenameInputChange: (String) -> Unit
+    onRenameInputChange: (String) -> Unit,
+    onDelete: () -> Unit,
+    onExportTxt: () -> Unit,
+    onExportCsv: () -> Unit,
+    onGetSearchUrl: (String) -> String
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+    var showMenu by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     val displayResult = uiState.result ?: return
 
     val sdf = SimpleDateFormat("d MMM. yyyy HH:mm", Locale.getDefault())
@@ -79,21 +93,61 @@ fun ScanResultContent(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Escanear", color = Color.White) },
+                title = { Text("Escanear", color = MaterialTheme.colorScheme.onPrimary) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onPrimary)
                     }
                 },
                 actions = {
-                    IconButton(onClick = { }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "More", tint = Color.White)
+                    Box {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "More", tint = MaterialTheme.colorScheme.onPrimary)
+                        }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Eliminar", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                onClick = { 
+                                    showMenu = false
+                                    onDelete()
+                                },
+                                leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Exportar TXT", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                onClick = { 
+                                    showMenu = false
+                                    onExportTxt()
+                                },
+                                leadingIcon = { Icon(Icons.Default.TextSnippet, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Exportar CSV", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                onClick = { 
+                                    showMenu = false
+                                    onExportCsv()
+                                },
+                                leadingIcon = { Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Renombrar", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                onClick = { 
+                                    showMenu = false
+                                    onOpenRename()
+                                },
+                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            )
+                        }
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF2196F3))
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.primary)
             )
         },
-        containerColor = Color(0xFF1A1A1A) 
+        containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -114,7 +168,7 @@ fun ScanResultContent(
                     Icon(
                         imageVector = Icons.Default.TextFields, 
                         contentDescription = null, 
-                        tint = Color.White,
+                        tint = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.size(28.dp)
                     )
                 }
@@ -122,13 +176,13 @@ fun ScanResultContent(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = if (uiState.customName.isNotEmpty()) uiState.customName else "Texto", 
-                        color = Color.White, 
+                        color = MaterialTheme.colorScheme.onSurface, 
                         fontWeight = FontWeight.Bold, 
                         fontSize = 18.sp
                     )
                     Text(
                         text = "$dateString, QR_CODE", 
-                        color = Color.Gray, 
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, 
                         fontSize = 13.sp
                     )
                 }
@@ -137,7 +191,7 @@ fun ScanResultContent(
                     Icon(
                         Icons.Default.Edit, 
                         contentDescription = "Rename", 
-                        tint = Color.Gray,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -146,7 +200,7 @@ fun ScanResultContent(
                     Icon(
                         Icons.Default.ContentCopy, 
                         contentDescription = "Copy", 
-                        tint = Color.Gray,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -155,7 +209,7 @@ fun ScanResultContent(
                     Icon(
                         if (displayResult.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
                         contentDescription = "Favorite",
-                        tint = if (displayResult.isFavorite) Color(0xFF2196F3) else Color.Gray,
+                        tint = if (displayResult.isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -164,34 +218,34 @@ fun ScanResultContent(
             if (uiState.isRenameDialogOpen) {
                 AlertDialog(
                     onDismissRequest = onCloseRename,
-                    title = { Text("Editar nombre", color = Color.White) },
+                    title = { Text("Editar nombre", color = MaterialTheme.colorScheme.onSurface) },
                     text = {
                         OutlinedTextField(
                             value = uiState.renameInput,
                             onValueChange = onRenameInputChange,
                             modifier = Modifier.fillMaxWidth(),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedBorderColor = Color(0xFF2196F3)
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary
                             )
                         )
                     },
                     confirmButton = {
                         TextButton(onClick = onSaveName) {
-                            Text("OK", color = Color(0xFF2196F3))
+                            Text("OK", color = MaterialTheme.colorScheme.primary)
                         }
                     },
                     dismissButton = {
                         TextButton(onClick = onCloseRename) {
-                            Text("CANCELAR", color = Color(0xFF2196F3))
+                            Text("CANCELAR", color = MaterialTheme.colorScheme.primary)
                         }
                     },
-                    containerColor = Color(0xFF333333)
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
             }
 
-            Divider(color = Color(0xFF333333), thickness = 0.5.dp)
+            Divider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
 
             // Content Area
             Column(
@@ -202,14 +256,14 @@ fun ScanResultContent(
             ) {
                 Text(
                     text = displayResult.displayValue ?: "",
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 18.sp,
                     lineHeight = 24.sp,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
 
-            Divider(color = Color(0xFF333333), thickness = 0.5.dp)
+            Divider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
 
             // Bottom Actions
             Row(
@@ -220,8 +274,15 @@ fun ScanResultContent(
             ) {
                 ResultActionItem(Icons.Default.Search, "Búsqueda\nWeb") {
                     try {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=${displayResult.rawValue}"))
-                        context.startActivity(intent)
+                        val searchUrl = onGetSearchUrl(displayResult.rawValue ?: "")
+                        if (uiState.isAppBrowserEnabled) {
+                            val builder = androidx.browser.customtabs.CustomTabsIntent.Builder()
+                            val customTabsIntent = builder.build()
+                            customTabsIntent.launchUrl(context, Uri.parse(searchUrl))
+                        } else {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(searchUrl))
+                            context.startActivity(intent)
+                        }
                     } catch (e: Exception) { }
                 }
                 ResultActionItem(Icons.Default.Share, "Compartir") {
@@ -236,17 +297,6 @@ fun ScanResultContent(
                 }
             }
 
-            // Ad Placeholder
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(100.dp)
-                    .background(Color(0xFF252525)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("Ad Placeholder", color = Color.Gray)
-            }
-
             // QR Preview
             Box(
                 modifier = Modifier
@@ -257,7 +307,7 @@ fun ScanResultContent(
                 Box(
                     modifier = Modifier
                         .size(160.dp)
-                        .background(Color.White)
+                        .background(Color.White) // QR needs white background
                         .padding(8.dp)
                 ) {
                     if (displayResult.imagePath != null) {
@@ -277,7 +327,7 @@ fun ScanResultContent(
                     }
 
                     // Blue Corners Overlay
-                    val cornerColor = Color(0xFF2196F3)
+                    val cornerColor = MaterialTheme.colorScheme.primary
                     val strokeWidth = 3.dp
                     val cornerSize = 20.dp
 
@@ -308,6 +358,13 @@ fun ScanResultContent(
                     }
                 }
             }
+
+            // Banner Ad at the very bottom
+            BannerAdView(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+            )
         }
     }
 }
@@ -321,12 +378,17 @@ fun ResultActionItem(icon: ImageVector, label: String, onClick: () -> Unit) {
         Box(
             modifier = Modifier
                 .size(60.dp)
-                .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp)),
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, contentDescription = label, tint = Color(0xFF2196F3), modifier = Modifier.size(32.dp))
+            Icon(icon, contentDescription = label, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
         }
         Spacer(modifier = Modifier.height(8.dp))
-        Text(text = label, color = Color.Gray, fontSize = 12.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        Text(
+            text = label, 
+            color = MaterialTheme.colorScheme.onSurfaceVariant, 
+            fontSize = 12.sp, 
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
     }
 }

@@ -10,4 +10,5 @@ interface IScannerRepository {
     suspend fun onBarcodeDetected(barcode: com.google.mlkit.vision.barcode.common.Barcode, bitmap: android.graphics.Bitmap?): Long
     fun toggleFlash(isEnabled: Boolean)
     fun flipCamera()
+    suspend fun processBarcodeManually(barcode: com.google.mlkit.vision.barcode.common.Barcode, bitmap: android.graphics.Bitmap?): BarcodeResult?
 }

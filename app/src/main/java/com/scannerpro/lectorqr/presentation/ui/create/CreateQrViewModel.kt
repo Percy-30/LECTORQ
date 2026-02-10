@@ -13,28 +13,316 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class CreateQrUiState(
-    val inputText: String = "",
+    val fullName: String = "",
+    val organization: String = "",
+    val address: String = "",
+    val phone: String = "",
+    val email: String = "",
+    val notes: String = "",
+    val title: String = "Mi código QR",
+    val isFavorite: Boolean = false,
     val qrBitmap: Bitmap? = null,
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val showResult: Boolean = false
 )
 
 @HiltViewModel
 class CreateQrViewModel @Inject constructor(
-    private val generateQrUseCase: GenerateQrUseCase
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
+    private val generateQrUseCase: com.scannerpro.lectorqr.domain.usecase.GenerateQrUseCase,
+    private val historyRepository: com.scannerpro.lectorqr.domain.repository.IHistoryRepository,
+    private val settingsRepository: com.scannerpro.lectorqr.domain.repository.ISettingsRepository
 ) : ViewModel() {
+
+    private val prefs = context.getSharedPreferences("qr_profile", android.content.Context.MODE_PRIVATE)
 
     private val _uiState = MutableStateFlow(CreateQrUiState())
     val uiState: StateFlow<CreateQrUiState> = _uiState.asStateFlow()
 
-    fun onTextChanged(newText: String) {
-        _uiState.update { it.copy(inputText = newText) }
+    init {
+        loadProfile()
+        if (_uiState.value.fullName.isNotBlank() || _uiState.value.phone.isNotBlank()) {
+            generateVCardQr()
+        }
     }
 
-    fun generateQr() {
+
+    private fun loadProfile() {
+        _uiState.update { it.copy(
+            fullName = prefs.getString("name", "") ?: "",
+            organization = prefs.getString("org", "") ?: "",
+            address = prefs.getString("addr", "") ?: "",
+            phone = prefs.getString("phone", "") ?: "",
+            email = prefs.getString("email", "") ?: "",
+            notes = prefs.getString("notes", "") ?: "",
+            title = prefs.getString("title", "Mi código QR") ?: "Mi código QR",
+            isFavorite = prefs.getBoolean("isFavorite", false)
+        ) }
+    }
+
+    private fun saveProfile() {
+        prefs.edit().apply {
+            putString("name", _uiState.value.fullName)
+            putString("org", _uiState.value.organization)
+            putString("addr", _uiState.value.address)
+            putString("phone", _uiState.value.phone)
+            putString("email", _uiState.value.email)
+            putString("notes", _uiState.value.notes)
+            putString("title", _uiState.value.title)
+            putBoolean("isFavorite", _uiState.value.isFavorite)
+            apply()
+        }
+    }
+
+    fun onFullNameChanged(it: String) = _uiState.update { state -> state.copy(fullName = it) }
+    fun onOrganizationChanged(it: String) = _uiState.update { state -> state.copy(organization = it) }
+    fun onAddressChanged(it: String) = _uiState.update { state -> state.copy(address = it) }
+    fun onPhoneChanged(it: String) = _uiState.update { state -> state.copy(phone = it) }
+    fun onEmailChanged(it: String) = _uiState.update { state -> state.copy(email = it) }
+    fun onNotesChanged(it: String) = _uiState.update { state -> state.copy(notes = it) }
+
+    fun toggleFavorite() {
+        val newState = !_uiState.value.isFavorite
+        _uiState.update { it.copy(isFavorite = newState) }
+        saveProfile()
+        syncWithDatabase()
+    }
+
+    fun updateTitle(newTitle: String) {
+        _uiState.update { it.copy(title = newTitle) }
+        saveProfile()
+        if (_uiState.value.isFavorite) {
+            syncWithDatabase()
+        }
+    }
+
+    fun deleteCurrentQr() {
+        if (_uiState.value.isFavorite) {
+            viewModelScope.launch {
+                val scanId = prefs.getLong("profileScanId", -1L)
+                if (scanId != -1L) {
+                    historyRepository.deleteScan(scanId)
+                    prefs.edit().putLong("profileScanId", -1L).apply()
+                }
+            }
+        }
+        _uiState.update { it.copy(showResult = false, isFavorite = false) }
+        saveProfile()
+    }
+
+    private fun syncWithDatabase() {
+        viewModelScope.launch {
+            val state = _uiState.value
+            val scanId = prefs.getLong("profileScanId", -1L)
+            
+            if (state.isFavorite) {
+                // Construct vCard string
+                val vCard = StringBuilder().apply {
+                    append("BEGIN:VCARD\n")
+                    append("VERSION:3.0\n")
+                    append("FN:${state.fullName}\n")
+                    append("ORG:${state.organization}\n")
+                    append("ADR:;;${state.address}\n")
+                    append("TEL:${state.phone}\n")
+                    append("EMAIL:${state.email}\n")
+                    append("NOTE:${state.notes}\n")
+                    append("END:VCARD")
+                }.toString()
+
+                val barcodeResult = com.scannerpro.lectorqr.domain.model.BarcodeResult(
+                    id = if (scanId != -1L) scanId else 0L,
+                    displayValue = state.fullName,
+                    rawValue = vCard,
+                    format = 256, // QR_CODE
+                    type = 1,     // CONTACT_INFO / VCARD
+                    timestamp = System.currentTimeMillis(),
+                    isFavorite = true,
+                    customName = state.title
+                )
+
+                if (scanId == -1L) {
+                    val newId = historyRepository.insertScan(barcodeResult)
+                    prefs.edit().putLong("profileScanId", newId).apply()
+                } else {
+                    historyRepository.insertScan(barcodeResult) // REPLACE strategy
+                }
+            } else if (scanId != -1L) {
+                historyRepository.deleteScan(scanId)
+                prefs.edit().putLong("profileScanId", -1L).apply()
+            }
+        }
+    }
+
+    fun generateVCardQr() {
+        val state = _uiState.value
+        if (state.fullName.isBlank() && state.phone.isBlank()) return
+
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            val bitmap = generateQrUseCase(_uiState.value.inputText)
-            _uiState.update { it.copy(qrBitmap = bitmap, isLoading = false) }
+            saveProfile()
+
+            val vCard = StringBuilder().apply {
+                append("BEGIN:VCARD\n")
+                append("VERSION:3.0\n")
+                append("FN:${state.fullName}\n")
+                append("ORG:${state.organization}\n")
+                append("ADR:;;${state.address}\n")
+                append("TEL:${state.phone}\n")
+                append("EMAIL:${state.email}\n")
+                append("NOTE:${state.notes}\n")
+                append("END:VCARD")
+            }.toString()
+
+            val bitmap = generateQrUseCase(vCard)
+            _uiState.update { it.copy(qrBitmap = bitmap, isLoading = false, showResult = true) }
+            
+            if (_uiState.value.isFavorite) {
+                syncWithDatabase()
+            }
+        }
+    }
+
+    fun shareQrCode() {
+        val bitmap = _uiState.value.qrBitmap ?: return
+        viewModelScope.launch {
+            try {
+                val file = android.util.Log.e("CreateQrVM", "Sharing QR...").run {
+                    val cachePath = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES)
+                    val fileName = "QR_Profile_${System.currentTimeMillis()}.png"
+                    val file = java.io.File(context.cacheDir, "images")
+                    file.mkdirs()
+                    val stream = java.io.FileOutputStream(java.io.File(file, fileName))
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+                    stream.close()
+                    androidx.core.content.FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        java.io.File(file, fileName)
+                    )
+                }
+
+                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "image/png"
+                    putExtra(android.content.Intent.EXTRA_STREAM, file)
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                val chooser = android.content.Intent.createChooser(intent, "Compartir código QR")
+                chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(chooser)
+            } catch (e: Exception) {
+                android.util.Log.e("CreateQrVM", "Error sharing QR", e)
+            }
+        }
+    }
+
+    fun saveToGallery() {
+        val bitmap = _uiState.value.qrBitmap ?: return
+        viewModelScope.launch {
+            val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val filename = "QR_Profile_${System.currentTimeMillis()}.jpg"
+                    var fos: java.io.OutputStream? = null
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        context.contentResolver?.also { resolver ->
+                            val contentValues = android.content.ContentValues().apply {
+                                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpg")
+                                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES)
+                                put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+                            }
+                            val imageUri: android.net.Uri? = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                            fos = imageUri?.let { resolver.openOutputStream(it) }
+                            fos?.use {
+                                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 100, it)
+                            }
+                            imageUri?.let { uri ->
+                                contentValues.clear()
+                                contentValues.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                                resolver.update(uri, contentValues, null, null)
+                            }
+                        }
+                    } else {
+                        val imagesDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES)
+                        val image = java.io.File(imagesDir, filename)
+                        fos = java.io.FileOutputStream(image)
+                        fos?.use {
+                            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 100, it)
+                        }
+                        // Refresh gallery for older versions
+                        val mediaScanIntent = android.content.Intent(android.content.Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
+                        mediaScanIntent.data = android.net.Uri.fromFile(image)
+                        context.sendBroadcast(mediaScanIntent)
+                    }
+                    true
+                } catch (e: Exception) {
+                    android.util.Log.e("CreateQrVM", "Error saving to gallery", e)
+                    false
+                }
+            }
+            if (result) {
+                android.widget.Toast.makeText(context, "QR guardado en la galería", android.widget.Toast.LENGTH_SHORT).show()
+            } else {
+                android.widget.Toast.makeText(context, "Error al guardar el QR", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun backToEdit() {
+        _uiState.update { it.copy(showResult = false) }
+    }
+
+    fun exportAsTxt() {
+        val state = _uiState.value
+        val content = """
+            Nombre: ${state.fullName}
+            Organización: ${state.organization}
+            Dirección: ${state.address}
+            Teléfono: ${state.phone}
+            Email: ${state.email}
+            Notas: ${state.notes}
+        """.trimIndent()
+        saveFileToDownloads("${state.title}.txt", "text/plain", content)
+    }
+
+    fun exportAsCsv() {
+        val state = _uiState.value
+        val content = "Nombre,Organización,Dirección,Teléfono,Email,Notas\n" +
+                "\"${state.fullName}\",\"${state.organization}\",\"${state.address}\",\"${state.phone}\",\"${state.email}\",\"${state.notes}\""
+        saveFileToDownloads("${state.title}.csv", "text/csv", content)
+    }
+
+    private fun saveFileToDownloads(filename: String, mimeType: String, content: String) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    val contentValues = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                    }
+                    val resolver = context.contentResolver
+                    val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                    uri?.let {
+                        resolver.openOutputStream(it)?.use { stream ->
+                            stream.write(content.toByteArray())
+                        }
+                        viewModelScope.launch {
+                            android.widget.Toast.makeText(context, "$filename guardado en Descargas", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } else {
+                    val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                    val file = java.io.File(downloadsDir, filename)
+                    java.io.FileOutputStream(file).use { stream ->
+                        stream.write(content.toByteArray())
+                    }
+                    viewModelScope.launch {
+                        android.widget.Toast.makeText(context, "$filename guardado en Descargas", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("CreateQrVM", "Error exporting file", e)
+            }
         }
     }
 }

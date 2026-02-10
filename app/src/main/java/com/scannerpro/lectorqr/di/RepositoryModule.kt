@@ -6,6 +6,8 @@ import com.scannerpro.lectorqr.data.repository.ZxingQRGeneratorRepository
 import com.scannerpro.lectorqr.domain.repository.IHistoryRepository
 import com.scannerpro.lectorqr.domain.repository.IQRGeneratorRepository
 import com.scannerpro.lectorqr.domain.repository.IScannerRepository
+import com.scannerpro.lectorqr.domain.repository.ISettingsRepository
+import com.scannerpro.lectorqr.data.repository.SettingsRepositoryImpl
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -33,4 +35,9 @@ abstract class RepositoryModule {
     abstract fun bindHistoryRepository(
         roomHistoryRepository: RoomHistoryRepository
     ): IHistoryRepository
+    @Binds
+    @Singleton
+    abstract fun bindSettingsRepository(
+        settingsRepositoryImpl: SettingsRepositoryImpl
+    ): ISettingsRepository
 }

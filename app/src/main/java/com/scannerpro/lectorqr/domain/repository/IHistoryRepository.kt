@@ -10,5 +10,6 @@ interface IHistoryRepository {
     suspend fun toggleFavorite(id: Long, isFavorite: Boolean)
     suspend fun updateScanName(id: Long, name: String)
     suspend fun deleteScan(id: Long)
+    suspend fun insertScan(scan: BarcodeResult): Long
     suspend fun clearHistory()
 }

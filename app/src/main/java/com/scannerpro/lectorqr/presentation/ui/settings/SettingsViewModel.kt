@@ -1,0 +1,51 @@
+package com.scannerpro.lectorqr.presentation.ui.settings
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.scannerpro.lectorqr.domain.repository.ISettingsRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+@HiltViewModel
+class SettingsViewModel @Inject constructor(
+    val settingsRepository: ISettingsRepository
+) : ViewModel() {
+
+    val isPremium = settingsRepository.isPremium
+    val themeMode = settingsRepository.themeMode.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+    val primaryColor = settingsRepository.primaryColor.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0xFF2196F3)
+    val isBeepEnabled = settingsRepository.isBeepEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    val isVibrateEnabled = settingsRepository.isVibrateEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    val isCopyToClipboardEnabled = settingsRepository.isCopyToClipboardEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    val isUrlInfoEnabled = settingsRepository.isUrlInfoEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val isBatchScanEnabled = settingsRepository.isBatchScanEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    val isAutofocusEnabled = settingsRepository.isAutofocusEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val isTapToFocusEnabled = settingsRepository.isTapToFocusEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val isKeepDuplicatesEnabled = settingsRepository.isKeepDuplicatesEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val isAppBrowserEnabled = settingsRepository.isAppBrowserEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val isAddToHistoryEnabled = settingsRepository.isAddToHistoryEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val isOpenUrlAutomaticallyEnabled = settingsRepository.isOpenUrlAutomaticallyEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val cameraSelection = settingsRepository.cameraSelection.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+    val searchEngine = settingsRepository.searchEngine.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "Google")
+    val isManualPremium = settingsRepository.isManualPremium
+
+    fun setThemeMode(mode: Int) = viewModelScope.launch { settingsRepository.setThemeMode(mode) }
+    fun setPrimaryColor(color: Long) = viewModelScope.launch { settingsRepository.setPrimaryColor(color) }
+    fun setBeepEnabled(enabled: Boolean) = viewModelScope.launch { settingsRepository.setBeepEnabled(enabled) }
+    fun setVibrateEnabled(enabled: Boolean) = viewModelScope.launch { settingsRepository.setVibrateEnabled(enabled) }
+    fun setCopyToClipboardEnabled(enabled: Boolean) = viewModelScope.launch { settingsRepository.setCopyToClipboardEnabled(enabled) }
+    fun setUrlInfoEnabled(enabled: Boolean) = viewModelScope.launch { settingsRepository.setUrlInfoEnabled(enabled) }
+    fun setBatchScanEnabled(enabled: Boolean) = viewModelScope.launch { settingsRepository.setBatchScanEnabled(enabled) }
+    fun setAutofocusEnabled(enabled: Boolean) = viewModelScope.launch { settingsRepository.setAutofocusEnabled(enabled) }
+    fun setTapToFocusEnabled(enabled: Boolean) = viewModelScope.launch { settingsRepository.setTapToFocusEnabled(enabled) }
+    fun setKeepDuplicatesEnabled(enabled: Boolean) = viewModelScope.launch { settingsRepository.setKeepDuplicatesEnabled(enabled) }
+    fun setAppBrowserEnabled(enabled: Boolean) = viewModelScope.launch { settingsRepository.setAppBrowserEnabled(enabled) }
+    fun setAddToHistoryEnabled(enabled: Boolean) = viewModelScope.launch { settingsRepository.setAddToHistoryEnabled(enabled) }
+    fun setOpenUrlAutomaticallyEnabled(enabled: Boolean) = viewModelScope.launch { settingsRepository.setOpenUrlAutomaticallyEnabled(enabled) }
+    fun setCameraSelection(camera: Int) = viewModelScope.launch { settingsRepository.setCameraSelection(camera) }
+    fun setSearchEngine(engine: String) = viewModelScope.launch { settingsRepository.setSearchEngine(engine) }
+    fun setManualPremium(enabled: Boolean) = viewModelScope.launch { settingsRepository.setManualPremium(enabled) }
+}

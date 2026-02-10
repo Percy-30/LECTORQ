@@ -20,18 +20,39 @@ data class ScanResultUiState(
     val isRenameDialogOpen: Boolean = false,
     val renameInput: String = "",
     val customName: String = "Texto",
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val searchEngine: String = "Google",
+    val isAppBrowserEnabled: Boolean = true
 )
 
 @HiltViewModel
 class ScanResultViewModel @Inject constructor(
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
     private val getScanByIdUseCase: GetScanByIdUseCase,
     private val toggleFavoriteUseCase: ToggleFavoriteUseCase,
-    private val updateScanNameUseCase: UpdateScanNameUseCase
+    private val updateScanNameUseCase: UpdateScanNameUseCase,
+    private val deleteScanUseCase: com.scannerpro.lectorqr.domain.usecase.DeleteScanUseCase,
+    private val settingsRepository: com.scannerpro.lectorqr.domain.repository.ISettingsRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ScanResultUiState())
     val uiState: StateFlow<ScanResultUiState> = _uiState.asStateFlow()
+    init {
+        observeSettings()
+    }
+
+    private fun observeSettings() {
+        viewModelScope.launch {
+            settingsRepository.searchEngine.collect { engine ->
+                _uiState.update { it.copy(searchEngine = engine) }
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.isAppBrowserEnabled.collect { enabled ->
+                _uiState.update { it.copy(isAppBrowserEnabled = enabled) }
+            }
+        }
+    }
 
     fun init(scanId: Long) {
         // If we already have the result (e.g. just scanned), we might already have it in state
@@ -95,6 +116,76 @@ class ScanResultViewModel @Inject constructor(
                     result = currentResult.copy(customName = newName)
                 ) 
             }
+        }
+    }
+
+    fun deleteScan() {
+        val currentResult = _uiState.value.result ?: return
+        viewModelScope.launch {
+            deleteScanUseCase(currentResult.id)
+            _uiState.update { ScanResultUiState() }
+        }
+    }
+
+    fun exportAsTxt() {
+        val result = _uiState.value.result ?: return
+        val content = """
+            Nombre: ${_uiState.value.customName}
+            Contenido: ${result.rawValue}
+            Fecha: ${java.text.SimpleDateFormat("d MMM. yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(result.timestamp))}
+        """.trimIndent()
+        saveFileToDownloads("${_uiState.value.customName}.txt", "text/plain", content)
+    }
+
+    fun exportAsCsv() {
+        val result = _uiState.value.result ?: return
+        val content = "Nombre,Contenido,Fecha\n" +
+                "\"${_uiState.value.customName}\",\"${result.rawValue}\",\"${result.timestamp}\""
+        saveFileToDownloads("${_uiState.value.customName}.csv", "text/csv", content)
+    }
+
+    private fun saveFileToDownloads(filename: String, mimeType: String, content: String) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    val contentValues = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                    }
+                    val resolver = context.contentResolver
+                    val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                    uri?.let {
+                        resolver.openOutputStream(it)?.use { stream ->
+                            stream.write(content.toByteArray())
+                        }
+                        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                            android.widget.Toast.makeText(context, "$filename guardado en Descargas", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } else {
+                    val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                    val file = java.io.File(downloadsDir, filename)
+                    java.io.FileOutputStream(file).use { stream ->
+                        stream.write(content.toByteArray())
+                    }
+                    viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "$filename guardado en Descargas", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("ScanResultVM", "Error exporting file", e)
+            }
+        }
+    }
+
+    fun getSearchUrl(query: String): String {
+        return when (_uiState.value.searchEngine) {
+            "Bing" -> "https://www.bing.com/search?q=$query"
+            "Yahoo" -> "https://search.yahoo.com/search?p=$query"
+            "DuckDuckGo" -> "https://duckduckgo.com/?q=$query"
+            "Yandex" -> "https://yandex.com/search/?text=$query"
+            else -> "https://www.google.com/search?q=$query"
         }
     }
 }

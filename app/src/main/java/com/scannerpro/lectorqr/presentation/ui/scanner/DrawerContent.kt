@@ -17,9 +17,10 @@ data class DrawerItem(
 
 @Composable
 fun DrawerContent(
+    isPremium: Boolean = false,
     onItemClick: (DrawerItem) -> Unit
 ) {
-    val items = listOf(
+    val items = listOfNotNull(
         DrawerItem("Escanear", Icons.Default.QrCodeScanner, "scanner"),
         DrawerItem("Escanear imagen", Icons.Default.Image, "scan_image"),
         DrawerItem("Favoritos", Icons.Default.Star, "favorites"),
@@ -27,7 +28,9 @@ fun DrawerContent(
         DrawerItem("Mi código QR", Icons.Default.AccountBox, "my_qr"),
         DrawerItem("Crear código QR", Icons.Default.Create, "create_qr"),
         DrawerItem("Configuración", Icons.Default.Settings, "settings"),
-        DrawerItem("Compartir", Icons.Default.Share, "share")
+        DrawerItem("Compartir", Icons.Default.Share, "share"),
+        DrawerItem("Nuestras Apps", Icons.Default.AutoAwesome, "our_apps"),
+        if (!isPremium) DrawerItem("Versión Premium", Icons.Default.WorkspacePremium, "remove_ads") else null
     )
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
