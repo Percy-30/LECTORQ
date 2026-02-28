@@ -13,6 +13,7 @@ import android.graphics.Rect
 import com.scannerpro.lectorqr.data.local.dao.ScanDao
 import com.scannerpro.lectorqr.data.local.entity.toEntity
 import com.scannerpro.lectorqr.domain.model.BarcodeResult
+import com.scannerpro.lectorqr.util.BarcodeTypeUtils
 import com.scannerpro.lectorqr.domain.repository.IScannerRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -25,7 +26,7 @@ class MLKitScannerRepository @Inject constructor(
     private val scanDao: ScanDao
 ) : IScannerRepository {
 
-    private val scannerOptions = BarcodeScannerOptions.Builder()
+    private val scannerOptions = com.google.mlkit.vision.barcode.BarcodeScannerOptions.Builder()
         .setBarcodeFormats(com.google.mlkit.vision.barcode.common.Barcode.FORMAT_ALL_FORMATS)
         .build()
 
@@ -46,7 +47,7 @@ class MLKitScannerRepository @Inject constructor(
             format = barcode.format,
             type = barcode.valueType,
             imagePath = imagePath,
-            customName = "Texto"
+            customName = context.getString(BarcodeTypeUtils.getTypeNameRes(barcode.valueType))
         )
         // Record in history and get generated ID
         val insertedId = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -91,11 +92,18 @@ class MLKitScannerRepository @Inject constructor(
                 // Crop the QR area if possible
                 val croppedBitmap = barcode.boundingBox?.let { box ->
                     try {
+                        // Add padding for a "Quiet Zone" (approx 15%)
+                        val paddingW = (box.width() * 0.15f).toInt()
+                        val paddingH = (box.height() * 0.15f).toInt()
+                        
                         // Ensure bounds are within bitmap
-                        val left = box.left.coerceAtLeast(0)
-                        val top = box.top.coerceAtLeast(0)
-                        val width = box.width().coerceAtMost(fullBitmap.width - left)
-                        val height = box.height().coerceAtMost(fullBitmap.height - top)
+                        val left = (box.left - paddingW).coerceAtLeast(0)
+                        val top = (box.top - paddingH).coerceAtLeast(0)
+                        val right = (box.right + paddingW).coerceAtMost(fullBitmap.width)
+                        val bottom = (box.bottom + paddingH).coerceAtMost(fullBitmap.height)
+                        
+                        val width = right - left
+                        val height = bottom - top
                         
                         if (width > 0 && height > 0) {
                             Bitmap.createBitmap(fullBitmap, left, top, width, height)
@@ -116,7 +124,8 @@ class MLKitScannerRepository @Inject constructor(
                     format = barcode.format,
                     type = barcode.valueType,
                     timestamp = System.currentTimeMillis(),
-                    imagePath = imagePath
+                    imagePath = imagePath,
+                    customName = context.getString(BarcodeTypeUtils.getTypeNameRes(barcode.valueType))
                 )
                 
                 // Record in history and get ID
@@ -155,7 +164,7 @@ class MLKitScannerRepository @Inject constructor(
             format = barcode.format,
             type = barcode.valueType,
             imagePath = imagePath,
-            customName = "Texto"
+            customName = context.getString(BarcodeTypeUtils.getTypeNameRes(barcode.valueType))
         )
     }
 }

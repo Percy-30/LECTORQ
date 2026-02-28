@@ -9,5 +9,7 @@ data class BarcodeResult(
     val timestamp: Long = System.currentTimeMillis(),
     val isFavorite: Boolean = false,
     val imagePath: String? = null,
-    val customName: String? = null
+    val customName: String? = null,
+    val foregroundColor: Int? = null,
+    val backgroundColor: Int? = null
 )

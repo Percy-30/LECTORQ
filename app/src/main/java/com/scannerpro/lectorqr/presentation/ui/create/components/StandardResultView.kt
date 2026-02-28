@@ -29,7 +29,18 @@ fun StandardResultView(
     onEditName: () -> Unit,
     onFavoriteClick: () -> Unit = {},
     isFavorite: Boolean = false,
-    content: List<String>
+    onExportTxt: (() -> Unit)? = null,
+    onExportCsv: (() -> Unit)? = null,
+    content: List<String>,
+    qrBackgroundColor: Int = android.graphics.Color.WHITE,
+    icon: @Composable () -> Unit = {
+        Icon(
+            Icons.Default.Person,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(28.dp)
+        )
+    }
 ) {
     Column(
         modifier = Modifier
@@ -49,12 +60,7 @@ fun StandardResultView(
                     .padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    Icons.Default.Person, 
-                    contentDescription = null, 
-                    tint = MaterialTheme.colorScheme.onSurface, 
-                    modifier = Modifier.size(28.dp)
-                )
+                icon()
                 Spacer(Modifier.width(16.dp))
                 Text(
                     title, 
@@ -88,52 +94,41 @@ fun StandardResultView(
                     contentDescription = "QR Code",
                     modifier = Modifier
                         .size(280.dp)
-                        .background(Color.White, RoundedCornerShape(8.dp)) // QR needs white
+                        .background(Color(qrBackgroundColor), RoundedCornerShape(8.dp))
                         .padding(16.dp)
                 )
             }
 
-            // Action Buttons (Save/Share)
+            // Action Buttons (Save/Share/TXT/CSV)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 48.dp),
-                horizontalArrangement = Arrangement.Center
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    IconButton(
-                        onClick = onSave,
-                        modifier = Modifier.size(80.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Save, 
-                            "Guardar", 
-                            tint = MaterialTheme.colorScheme.primary, 
-                            modifier = Modifier.size(56.dp)
-                        )
-                    }
-                    Text("Guardar", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+                ResultActionButton(
+                    icon = Icons.Default.Save,
+                    label = "Guardar",
+                    onClick = onSave
+                )
+                ResultActionButton(
+                    icon = Icons.Default.Share,
+                    label = "Compartir",
+                    onClick = onShare
+                )
+                if (onExportTxt != null) {
+                    ResultActionButton(
+                        icon = Icons.Default.Description,
+                        label = "TXT",
+                        onClick = onExportTxt
+                    )
                 }
-
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    IconButton(
-                        onClick = onShare,
-                        modifier = Modifier.size(80.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Share, 
-                            "Compartir", 
-                            tint = MaterialTheme.colorScheme.primary, 
-                            modifier = Modifier.size(56.dp)
-                        )
-                    }
-                    Text("Compartir", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+                if (onExportCsv != null) {
+                    ResultActionButton(
+                        icon = Icons.Default.TableChart,
+                        label = "CSV",
+                        onClick = onExportCsv
+                    )
                 }
             }
 
@@ -162,6 +157,39 @@ fun StandardResultView(
         // Banner Ad
         com.scannerpro.lectorqr.presentation.ui.components.BannerAdView(
             modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun ResultActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.padding(8.dp)
+    ) {
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier
+                .size(64.dp)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(32.dp)
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = label,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
         )
     }
 }

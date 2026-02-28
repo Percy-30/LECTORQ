@@ -36,21 +36,66 @@ data class CreateLocationUiState(
     val query: String = "",
     val qrBitmap: Bitmap? = null,
     val isLoading: Boolean = false,
-    val showResult: Boolean = false
+    val showResult: Boolean = false,
+    val customName: String = "Ubicación",
+    val foregroundColor: Int = android.graphics.Color.BLACK,
+    val backgroundColor: Int = android.graphics.Color.WHITE,
+    val scanId: Long = -1L,
+    val isFavorite: Boolean = false
 )
 
 @HiltViewModel
 class CreateLocationViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
-    private val generateQrUseCase: GenerateQrUseCase
+    private val generateQrUseCase: GenerateQrUseCase,
+    private val historyRepository: com.scannerpro.lectorqr.domain.repository.IHistoryRepository,
+    private val settingsRepository: com.scannerpro.lectorqr.domain.repository.ISettingsRepository,
+    private val fileHelper: com.scannerpro.lectorqr.util.FileHelper
 ) : ViewModel() {
 
+    private val prefs = context.getSharedPreferences("qr_location", android.content.Context.MODE_PRIVATE)
     private val _uiState = MutableStateFlow(CreateLocationUiState())
     val uiState: StateFlow<CreateLocationUiState> = _uiState.asStateFlow()
+
+    init {
+        loadDraft()
+    }
+
+    private fun loadDraft() {
+        val draftRaw = prefs.getString("rawValue", "") ?: ""
+        val draftTitle = prefs.getString("title", "Ubicación") ?: "Ubicación"
+        val fgColor = prefs.getInt("foregroundColor", android.graphics.Color.BLACK)
+        val bgColor = prefs.getInt("backgroundColor", android.graphics.Color.WHITE)
+        
+        if (draftRaw.isNotEmpty() && draftRaw.startsWith("geo:")) {
+            val coords = draftRaw.substringAfter("geo:", "").substringBefore("?")
+            val parts = coords.split(",")
+            val lat = parts.getOrNull(0) ?: ""
+            val lng = parts.getOrNull(1) ?: ""
+            val query = draftRaw.substringAfter("q=", "")
+            
+            _uiState.update { it.copy(
+                latitude = lat,
+                longitude = lng,
+                query = query,
+                customName = draftTitle,
+                foregroundColor = fgColor,
+                backgroundColor = bgColor
+            ) }
+            prefs.edit().clear().apply()
+        }
+    }
 
     fun onLatitudeChanged(lat: String) = _uiState.update { it.copy(latitude = lat) }
     fun onLongitudeChanged(lng: String) = _uiState.update { it.copy(longitude = lng) }
     fun onQueryChanged(query: String) = _uiState.update { it.copy(query = query) }
+    fun onForegroundColorChanged(color: Int) = _uiState.update { it.copy(foregroundColor = color) }
+    fun onBackgroundColorChanged(color: Int) = _uiState.update { it.copy(backgroundColor = color) }
+
+    fun toggleFavorite() {
+        _uiState.update { it.copy(isFavorite = !it.isFavorite) }
+        syncWithHistory()
+    }
 
     fun generateQr() {
         val lat = _uiState.value.latitude.trim()
@@ -62,18 +107,92 @@ class CreateLocationViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true) }
             
             val geoUrl = if (_uiState.value.query.isNotBlank()) {
-                "geo:$lat,$lng?q=${_uiState.value.query}"
+                "geo:$lat,$lng?q=${android.net.Uri.encode(_uiState.value.query)}"
             } else {
                 "geo:$lat,$lng"
             }
             
-            val bitmap = generateQrUseCase(geoUrl)
+            val logoBitmap = if (settingsRepository.isPremium.value) {
+                com.scannerpro.lectorqr.util.BitmapUtils.getDrawableAsBitmap(context, com.scannerpro.lectorqr.R.drawable.ic_location, 100, _uiState.value.foregroundColor)
+            } else null
+
+            val bitmap = generateQrUseCase(
+                text = geoUrl,
+                foregroundColor = _uiState.value.foregroundColor,
+                backgroundColor = _uiState.value.backgroundColor,
+                logo = logoBitmap
+            )
             _uiState.update { it.copy(qrBitmap = bitmap, isLoading = false, showResult = true) }
+            syncWithHistory()
+        }
+    }
+
+    private fun syncWithHistory() {
+        viewModelScope.launch {
+            val state = _uiState.value
+            if (state.latitude.isBlank() || state.longitude.isBlank()) return@launch
+            
+            val geoUrl = if (state.query.isNotBlank()) {
+                "geo:${state.latitude},${state.longitude}?q=${android.net.Uri.encode(state.query)}"
+            } else {
+                "geo:${state.latitude},${state.longitude}"
+            }
+            
+            val imagePath = if (state.qrBitmap != null) {
+                fileHelper.saveBitmapToInternalStorage(context, state.qrBitmap!!, "LOCATION_${System.currentTimeMillis()}")
+            } else null
+
+            val barcodeResult = com.scannerpro.lectorqr.domain.model.BarcodeResult(
+                id = if (state.scanId != -1L) state.scanId else 0L,
+                displayValue = if (state.query.isNotBlank()) state.query else "${state.latitude}, ${state.longitude}",
+                rawValue = geoUrl,
+                format = 256, // QR_CODE
+                type = com.google.mlkit.vision.barcode.common.Barcode.TYPE_GEO,
+                timestamp = System.currentTimeMillis(),
+                isFavorite = state.isFavorite,
+                imagePath = imagePath,
+                customName = state.customName,
+                foregroundColor = state.foregroundColor,
+                backgroundColor = state.backgroundColor
+            )
+            val newId = historyRepository.insertScan(barcodeResult)
+            _uiState.update { it.copy(scanId = newId) }
         }
     }
 
     fun backToEdit() {
         _uiState.update { it.copy(showResult = false) }
+    }
+
+    fun deleteQr() {
+        _uiState.update { it.copy(showResult = false, latitude = "", longitude = "", query = "", qrBitmap = null, scanId = -1L) }
+    }
+
+    fun exportToTxt(isShare: Boolean = true) {
+        val lat = _uiState.value.latitude
+        val lng = _uiState.value.longitude
+        if (lat.isBlank() || lng.isBlank()) return
+        val locData = "Latitud: $lat\nLongitud: $lng\nConsulta: ${_uiState.value.query}"
+        val filename = "${_uiState.value.customName}.txt"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/plain", locData)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/plain", locData)
+        }
+    }
+
+    fun exportToCsv(isShare: Boolean = true) {
+        val lat = _uiState.value.latitude
+        val lng = _uiState.value.longitude
+        if (lat.isBlank() || lng.isBlank()) return
+        val header = "Latitud,Longitud,Consulta\n"
+        val row = "\"$lat\",\"$lng\",\"${_uiState.value.query.replace("\"", "\"\"")}\""
+        val filename = "${_uiState.value.customName}.csv"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/csv", header + row)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/csv", header + row)
+        }
     }
 
     fun saveToGallery() {
@@ -134,6 +253,12 @@ class CreateLocationViewModel @Inject constructor(
             android.util.Log.e("CreateLocationVM", "Error sharing", e)
         }
     }
+
+    fun updateCustomName(name: String) {
+        _uiState.update { it.copy(customName = name) }
+        syncWithHistory()
+    }
+
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -144,6 +269,8 @@ fun CreateLocationScreen(
     viewModel: CreateLocationViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var showMenu by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -156,8 +283,107 @@ fun CreateLocationScreen(
                 },
                 actions = {
                     if (uiState.showResult) {
-                        IconButton(onClick = { /* Menu */ }) {
+                        IconButton(onClick = { showMenu = true }) {
                             Icon(Icons.Default.MoreVert, contentDescription = "Más", tint = MaterialTheme.colorScheme.onPrimary)
+                        }
+                        var subMenu by remember { mutableStateOf<String?>(null) }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { 
+                                showMenu = false 
+                                subMenu = null
+                            }
+                        ) {
+                            when (subMenu) {
+                                null -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Eliminar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.deleteQr()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Renombrar") },
+                                        onClick = {
+                                            showMenu = false
+                                            showRenameDialog = true
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("TXT") },
+                                        onClick = { subMenu = "TXT" },
+                                        leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("CSV") },
+                                        onClick = { subMenu = "CSV" },
+                                        leadingIcon = { Icon(Icons.Default.TableChart, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Editar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.backToEdit()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.History, contentDescription = null) }
+                                    )
+                                }
+                                "TXT" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                                "CSV" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                            }
                         }
                     } else {
                         IconButton(onClick = onMenuClick) {
@@ -173,11 +399,17 @@ fun CreateLocationScreen(
         if (uiState.showResult && uiState.qrBitmap != null) {
             com.scannerpro.lectorqr.presentation.ui.create.components.StandardResultView(
                 paddingValues = paddingValues,
-                title = "Mi código",
+                title = uiState.customName,
                 qrBitmap = uiState.qrBitmap!!,
                 onSave = { viewModel.saveToGallery() },
                 onShare = { viewModel.shareQr() },
-                onEditName = { /* Show Rename Dialog if needed */ },
+                onEditName = { showRenameDialog = true },
+                onFavoriteClick = { viewModel.toggleFavorite() },
+                onExportTxt = { viewModel.exportToTxt() },
+                onExportCsv = { viewModel.exportToCsv() },
+                isFavorite = uiState.isFavorite,
+                qrBackgroundColor = uiState.backgroundColor,
+                icon = { Icon(Icons.Default.LocationOn, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(28.dp)) },
                 content = listOf(
                     "Latitud: ${uiState.latitude}",
                     "Longitud: ${uiState.longitude}",
@@ -248,6 +480,22 @@ fun CreateLocationScreen(
                     )
                 )
 
+                val isPremium = com.scannerpro.lectorqr.presentation.ui.theme.LocalIsPremium.current
+                
+                com.scannerpro.lectorqr.presentation.ui.create.components.ColorPickerSection(
+                    title = "Color de primer plano",
+                    selectedColor = uiState.foregroundColor,
+                    isPremium = isPremium,
+                    onColorSelected = { viewModel.onForegroundColorChanged(it) }
+                )
+                
+                com.scannerpro.lectorqr.presentation.ui.create.components.ColorPickerSection(
+                    title = "Color de fondo",
+                    selectedColor = uiState.backgroundColor,
+                    isPremium = isPremium,
+                    onColorSelected = { viewModel.onBackgroundColorChanged(it) }
+                )
+
                 Button(
                     onClick = { viewModel.generateQr() },
                     modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -264,5 +512,34 @@ fun CreateLocationScreen(
                 }
             }
         }
+    }
+    if (showRenameDialog) {
+        var dialogTitle by remember(uiState.customName) { mutableStateOf(uiState.customName) }
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Renombrar") },
+            text = {
+                OutlinedTextField(
+                    value = dialogTitle,
+                    onValueChange = { dialogTitle = it },
+                    label = { Text("Nombre") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.updateCustomName(dialogTitle)
+                    showRenameDialog = false
+                }) {
+                    Text("Aceptar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 }

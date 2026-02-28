@@ -1,5 +1,7 @@
 package com.scannerpro.lectorqr.presentation.ui.scanner
 
+import com.scannerpro.lectorqr.R
+
 import android.util.Log
 import android.net.Uri
 import androidx.lifecycle.ViewModel
@@ -7,6 +9,8 @@ import androidx.lifecycle.viewModelScope
 import com.scannerpro.lectorqr.domain.model.BarcodeResult
 import com.scannerpro.lectorqr.domain.repository.IScannerRepository
 import com.scannerpro.lectorqr.domain.usecase.ScanCodeUseCase
+import com.scannerpro.lectorqr.util.BarcodeTypeUtils
+import com.scannerpro.lectorqr.util.FileUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -101,8 +105,8 @@ class ScannerViewModel @Inject constructor(
                         it.copy(
                             result = result,
                             isFavorite = result.isFavorite,
-                            customName = result.customName ?: "Texto",
-                            renameInput = result.customName ?: "Texto",
+                            customName = result.customName ?: context.getString(com.scannerpro.lectorqr.util.BarcodeTypeUtils.getTypeNameRes(result.type)),
+                            renameInput = result.customName ?: context.getString(com.scannerpro.lectorqr.util.BarcodeTypeUtils.getTypeNameRes(result.type)),
                             isLoading = false
                         )
                     }
@@ -156,7 +160,9 @@ class ScannerViewModel @Inject constructor(
             
             if (_uiState.value.isBatchModeActive) {
                 viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                    android.widget.Toast.makeText(context, "Escaneado: ${barcode.displayValue ?: "Código"}", android.widget.Toast.LENGTH_SHORT).show()
+                    val scannedLabel = context.getString(R.string.scanned_label)
+                    val codeLabel = context.getString(R.string.type_text)
+                    android.widget.Toast.makeText(context, "$scannedLabel ${barcode.displayValue ?: codeLabel}", android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
             
@@ -170,10 +176,9 @@ class ScannerViewModel @Inject constructor(
             
             // Copy to clipboard if enabled
             if (settingsRepository.isCopyToClipboardEnabled.firstOrNull() == true) {
-                barcode.displayValue?.let { value ->
-                    val clipboardManager = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    clipboardManager.setPrimaryClip(android.content.ClipData.newPlainText("QR Code", value))
-                }
+                val formattedValue = BarcodeTypeUtils.getFormattedValue(context, barcode.valueType, barcode.rawValue)
+                val clipboardManager = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboardManager.setPrimaryClip(android.content.ClipData.newPlainText("QR Code", formattedValue))
             }
             
             // Open URL automatically if enabled
@@ -321,57 +326,35 @@ class ScannerViewModel @Inject constructor(
         }
     }
 
-    fun exportAsTxt() {
+    fun exportAsTxt(isShare: Boolean = false) {
         val result = _scanResultUiState.value.result ?: return
+        val formattedValue = BarcodeTypeUtils.getFormattedValue(context, result.type, result.rawValue)
         val content = """
-            Nombre: ${_scanResultUiState.value.customName}
-            Contenido: ${result.rawValue}
-            Fecha: ${java.text.SimpleDateFormat("d MMM. yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(result.timestamp))}
+            ${context.getString(R.string.export_name_label)} ${_scanResultUiState.value.customName}
+            ${context.getString(R.string.export_content_label)} $formattedValue
+            ${context.getString(R.string.export_date_label)} ${java.text.SimpleDateFormat("d MMM. yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(result.timestamp))}
         """.trimIndent()
-        saveFileToDownloads("${_scanResultUiState.value.customName}.txt", "text/plain", content)
-    }
-
-    fun exportAsCsv() {
-        val result = _scanResultUiState.value.result ?: return
-        val content = "Nombre,Contenido,Fecha\n" +
-                "\"${_scanResultUiState.value.customName}\",\"${result.rawValue}\",\"${result.timestamp}\""
-        saveFileToDownloads("${_scanResultUiState.value.customName}.csv", "text/csv", content)
-    }
-
-    private fun saveFileToDownloads(filename: String, mimeType: String, content: String) {
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                    val contentValues = android.content.ContentValues().apply {
-                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
-                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
-                    }
-                    val resolver = context.contentResolver
-                    val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-                    uri?.let {
-                        resolver.openOutputStream(it)?.use { stream ->
-                            stream.write(content.toByteArray())
-                        }
-                        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                            android.widget.Toast.makeText(context, "$filename guardado en Descargas", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                } else {
-                    val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-                    val file = java.io.File(downloadsDir, filename)
-                    java.io.FileOutputStream(file).use { stream ->
-                        stream.write(content.toByteArray())
-                    }
-                    viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                        android.widget.Toast.makeText(context, "$filename guardado en Descargas", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("ScannerVM", "Error exporting file", e)
-            }
+        val filename = "${_scanResultUiState.value.customName}.txt"
+        if (isShare) {
+            FileUtils.shareFile(context, filename, "text/plain", content)
+        } else {
+            FileUtils.saveFileToDownloads(context, filename, "text/plain", content)
         }
     }
+
+    fun exportAsCsv(isShare: Boolean = false) {
+        val result = _scanResultUiState.value.result ?: return
+        val formattedValue = BarcodeTypeUtils.getFormattedValue(context, result.type, result.rawValue).replace("\n", " ").replace("\"", "\"\"")
+        val content = "${context.getString(R.string.csv_header_name)},${context.getString(R.string.csv_header_content)},${context.getString(R.string.csv_header_date)}\n" +
+                "\"${_scanResultUiState.value.customName}\",\"$formattedValue\",\"${result.timestamp}\""
+        val filename = "${_scanResultUiState.value.customName}.csv"
+        if (isShare) {
+            FileUtils.shareFile(context, filename, "text/csv", content)
+        } else {
+            FileUtils.saveFileToDownloads(context, filename, "text/csv", content)
+        }
+    }
+
 
     fun toggleBatchMode() {
         _uiState.update { it.copy(isBatchModeActive = !it.isBatchModeActive) }
@@ -387,17 +370,52 @@ class ScannerViewModel @Inject constructor(
         }
     }
 
+    fun saveQrToGallery() {
+        viewModelScope.launch {
+            val bitmap = _scanResultUiState.value.qrBitmap ?: _scanResultUiState.value.result?.imagePath?.let {
+                try {
+                    android.graphics.BitmapFactory.decodeFile(it)
+                } catch (e: Exception) {
+                    null
+                }
+            } ?: return@launch
+            
+            try {
+                val filename = "QR_${_scanResultUiState.value.customName}_${System.currentTimeMillis()}.png"
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    val contentValues = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/png")
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES)
+                    }
+                    val resolver = context.contentResolver
+                    val uri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                    uri?.let {
+                        resolver.openOutputStream(it)?.use { stream ->
+                            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+                        }
+                        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                            android.widget.Toast.makeText(context, "Código guardado en Galería", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ScannerVM", "Error saving", e)
+            }
+        }
+    }
+
     fun shareApp() {
         val sendIntent = android.content.Intent().apply {
             action = android.content.Intent.ACTION_SEND
             putExtra(
                 android.content.Intent.EXTRA_TEXT,
-                "¡Echa un vistazo a Lector QR Pro! Es la herramienta más rápida para escanear y crear códigos QR. Descárgala aquí: https://play.google.com/store/apps/details?id=${context.packageName}"
+                context.getString(R.string.share_app_text, context.packageName)
             )
             type = "text/plain"
             addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        val shareIntent = android.content.Intent.createChooser(sendIntent, "Compartir App")
+        val shareIntent = android.content.Intent.createChooser(sendIntent, context.getString(R.string.drawer_share))
         shareIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(shareIntent)
     }
@@ -414,7 +432,7 @@ class ScannerViewModel @Inject constructor(
 
     fun removeAds() {
         viewModelScope.launch {
-            android.widget.Toast.makeText(context, "Función Premium próximamente", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(context, context.getString(R.string.premium_soon), android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 }

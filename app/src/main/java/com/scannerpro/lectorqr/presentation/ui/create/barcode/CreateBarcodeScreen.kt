@@ -40,20 +40,50 @@ data class BarcodeUiState(
     val customName: String = "",
     val isFavorite: Boolean = false,
     val scanId: Long = -1L,
-    val format: Int = 0
+    val format: Int = 0,
+    val foregroundColor: Int = android.graphics.Color.BLACK,
+    val backgroundColor: Int = android.graphics.Color.WHITE
 )
 
 @HiltViewModel
 class BarcodeViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
     private val generateBarcodeUseCase: GenerateBarcodeUseCase,
-    private val historyRepository: IHistoryRepository
+    private val historyRepository: IHistoryRepository,
+    private val fileHelper: com.scannerpro.lectorqr.util.FileHelper
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BarcodeUiState())
     val uiState: StateFlow<BarcodeUiState> = _uiState.asStateFlow()
 
+    private val prefs = context.getSharedPreferences("qr_barcode", android.content.Context.MODE_PRIVATE)
+
+    init {
+        loadDraft()
+    }
+
+    private fun loadDraft() {
+        val draftInput = prefs.getString("inputValue", "") ?: ""
+        val draftTitle = prefs.getString("title", "Barcode") ?: "Barcode"
+        val format = prefs.getInt("format", com.google.mlkit.vision.barcode.common.Barcode.FORMAT_EAN_13)
+        val fgColor = prefs.getInt("foregroundColor", android.graphics.Color.BLACK)
+        val bgColor = prefs.getInt("backgroundColor", android.graphics.Color.WHITE)
+        
+        if (draftInput.isNotEmpty()) {
+            _uiState.update { it.copy(
+                inputValue = draftInput,
+                customName = draftTitle,
+                format = format,
+                foregroundColor = fgColor,
+                backgroundColor = bgColor
+            ) }
+            prefs.edit().clear().apply()
+        }
+    }
+
     fun onInputChanged(value: String) = _uiState.update { it.copy(inputValue = value) }
+    fun onForegroundColorChanged(color: Int) = _uiState.update { it.copy(foregroundColor = color) }
+    fun onBackgroundColorChanged(color: Int) = _uiState.update { it.copy(backgroundColor = color) }
     
     fun initFormat(formatName: String, format: Int) {
         if (_uiState.value.customName.isBlank()) {
@@ -69,10 +99,17 @@ class BarcodeViewModel @Inject constructor(
 
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            // ZXing 1D barcodes need more width than height for better visibility
             // but we'll stick to 512x512 as baseline, ZXing adjusts internally.
-            val bitmap = generateBarcodeUseCase(input, format, 1024, 512)
+            val bitmap = generateBarcodeUseCase(
+                input, 
+                format, 
+                1024, 
+                512,
+                _uiState.value.foregroundColor,
+                _uiState.value.backgroundColor
+            )
             _uiState.update { it.copy(qrBitmap = bitmap, isLoading = false, showResult = true) }
+            syncWithHistory()
         }
     }
 
@@ -87,23 +124,22 @@ class BarcodeViewModel @Inject constructor(
     private fun syncWithHistory() {
         viewModelScope.launch {
             val state = _uiState.value
-            if (state.isFavorite) {
-                val barcodeResult = com.scannerpro.lectorqr.domain.model.BarcodeResult(
-                    id = if (state.scanId != -1L) state.scanId else 0L,
-                    displayValue = state.inputValue,
-                    rawValue = state.inputValue,
-                    format = state.format,
-                    type = 0,   // TEXT
-                    timestamp = System.currentTimeMillis(),
-                    isFavorite = true,
-                    customName = state.customName
-                )
-                val newId = historyRepository.insertScan(barcodeResult)
-                _uiState.update { it.copy(scanId = newId) }
-            } else if (state.scanId != -1L) {
-                historyRepository.deleteScan(state.scanId)
-                _uiState.update { it.copy(scanId = -1L) }
-            }
+            
+            val barcodeResult = com.scannerpro.lectorqr.domain.model.BarcodeResult(
+                id = if (state.scanId != -1L) state.scanId else 0L,
+                displayValue = state.inputValue,
+                rawValue = state.inputValue,
+                format = state.format,
+                type = com.google.mlkit.vision.barcode.common.Barcode.TYPE_TEXT,
+                timestamp = System.currentTimeMillis(),
+                isFavorite = state.isFavorite,
+                imagePath = if (state.qrBitmap != null) fileHelper.saveBitmapToInternalStorage(context, state.qrBitmap!!, "BARCODE_${System.currentTimeMillis()}") else null,
+                customName = state.customName,
+                foregroundColor = state.foregroundColor,
+                backgroundColor = state.backgroundColor
+            )
+            val newId = historyRepository.insertScan(barcodeResult)
+            _uiState.update { it.copy(scanId = newId) }
         }
     }
 
@@ -164,6 +200,54 @@ class BarcodeViewModel @Inject constructor(
             android.util.Log.e("BarcodeVM", "Error sharing", e)
         }
     }
+
+    fun updateTitle(newTitle: String) {
+        _uiState.update { it.copy(customName = newTitle) }
+        viewModelScope.launch {
+            if (_uiState.value.scanId != -1L) {
+                historyRepository.updateScanName(_uiState.value.scanId, newTitle)
+            }
+        }
+    }
+    
+    fun deleteQr() {
+        viewModelScope.launch {
+            val id = _uiState.value.scanId
+            if (id != -1L) {
+                val scan = historyRepository.getScanById(id)
+                if (scan?.imagePath != null) {
+                    fileHelper.deleteFile(scan.imagePath)
+                }
+                historyRepository.deleteScan(id)
+            }
+            _uiState.update { it.copy(showResult = false, isFavorite = false, scanId = -1L, inputValue = "", qrBitmap = null) }
+        }
+    }
+
+    fun exportToTxt(isShare: Boolean = true) {
+        val input = _uiState.value.inputValue
+        if (input.isBlank()) return
+        val barcodeData = "Formato: ${_uiState.value.customName}\nContenido: $input"
+        val filename = "${_uiState.value.customName}.txt"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/plain", barcodeData)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/plain", barcodeData)
+        }
+    }
+
+    fun exportToCsv(isShare: Boolean = true) {
+        val input = _uiState.value.inputValue
+        if (input.isBlank()) return
+        val header = "Formato,Contenido\n"
+        val row = "\"${_uiState.value.customName}\",\"$input\""
+        val filename = "${_uiState.value.customName}.csv"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/csv", header + row)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/csv", header + row)
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -177,7 +261,8 @@ fun CreateBarcodeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showRenameDialog by remember { mutableStateOf(false) }
-    var newTitle by remember { mutableStateOf(formatName) }
+    var showMenu by remember { mutableStateOf(false) }
+    var newTitle by remember(uiState.customName) { mutableStateOf(uiState.customName) }
 
     LaunchedEffect(formatName, format) {
         viewModel.initFormat(formatName, format)
@@ -194,13 +279,112 @@ fun CreateBarcodeScreen(
                     }
                 },
                 actions = {
-                    if (!uiState.showResult) {
-                        IconButton(onClick = onMenuClick) {
-                            Icon(Icons.Default.Menu, contentDescription = "Menú", tint = MaterialTheme.colorScheme.onPrimary)
+                    if (uiState.showResult) {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Más", tint = MaterialTheme.colorScheme.onPrimary)
+                        }
+                        var subMenu by remember { mutableStateOf<String?>(null) }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { 
+                                showMenu = false 
+                                subMenu = null
+                            }
+                        ) {
+                            when (subMenu) {
+                                null -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Eliminar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.deleteQr()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Renombrar") },
+                                        onClick = {
+                                            showMenu = false
+                                            showRenameDialog = true
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("TXT") },
+                                        onClick = { subMenu = "TXT" },
+                                        leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("CSV") },
+                                        onClick = { subMenu = "CSV" },
+                                        leadingIcon = { Icon(Icons.Default.TableChart, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Editar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.backToEdit()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.History, contentDescription = null) }
+                                    )
+                                }
+                                "TXT" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                                "CSV" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                            }
                         }
                     } else {
-                        IconButton(onClick = { /* More options */ }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "Más", tint = MaterialTheme.colorScheme.onPrimary)
+                        IconButton(onClick = onMenuClick) {
+                            Icon(Icons.Default.Menu, contentDescription = "Menú", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
                 },
@@ -219,6 +403,10 @@ fun CreateBarcodeScreen(
                 onEditName = { showRenameDialog = true },
                 isFavorite = uiState.isFavorite,
                 onFavoriteClick = { viewModel.toggleFavorite() },
+                onExportTxt = { viewModel.exportToTxt() },
+                onExportCsv = { viewModel.exportToCsv() },
+                qrBackgroundColor = uiState.backgroundColor,
+                icon = { Icon(Icons.Default.QrCodeScanner, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(28.dp)) },
                 content = listOf("$formatName: ${uiState.inputValue}")
             )
         } else {
@@ -262,6 +450,22 @@ fun CreateBarcodeScreen(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                 )
 
+                val isPremium = com.scannerpro.lectorqr.presentation.ui.theme.LocalIsPremium.current
+                
+                com.scannerpro.lectorqr.presentation.ui.create.components.ColorPickerSection(
+                    title = "Color de primer plano",
+                    selectedColor = uiState.foregroundColor,
+                    isPremium = isPremium,
+                    onColorSelected = { viewModel.onForegroundColorChanged(it) }
+                )
+                
+                com.scannerpro.lectorqr.presentation.ui.create.components.ColorPickerSection(
+                    title = "Color de fondo",
+                    selectedColor = uiState.backgroundColor,
+                    isPremium = isPremium,
+                    onColorSelected = { viewModel.onBackgroundColorChanged(it) }
+                )
+
                 Button(
                     onClick = { viewModel.generateBarcode() },
                     modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -281,20 +485,22 @@ fun CreateBarcodeScreen(
     }
 
     if (showRenameDialog) {
+        var dialogTitle by remember(uiState.customName) { mutableStateOf(uiState.customName) }
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
             title = { Text("Renombrar") },
             text = {
                 OutlinedTextField(
-                    value = newTitle,
-                    onValueChange = { newTitle = it },
+                    value = dialogTitle,
+                    onValueChange = { dialogTitle = it },
                     label = { Text("Nombre") },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.initFormat(newTitle, format)
+                    viewModel.updateTitle(dialogTitle)
                     showRenameDialog = false
                 }) {
                     Text("Aceptar")

@@ -36,21 +36,58 @@ data class CreateEmailUiState(
     val message: String = "",
     val qrBitmap: Bitmap? = null,
     val isLoading: Boolean = false,
-    val showResult: Boolean = false
+    val showResult: Boolean = false,
+    val customName: String = "Email",
+    val foregroundColor: Int = android.graphics.Color.BLACK,
+    val backgroundColor: Int = android.graphics.Color.WHITE,
+    val scanId: Long = -1L,
+    val isFavorite: Boolean = false
 )
 
 @HiltViewModel
 class CreateEmailViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
-    private val generateQrUseCase: GenerateQrUseCase
+    private val generateQrUseCase: GenerateQrUseCase,
+    private val historyRepository: com.scannerpro.lectorqr.domain.repository.IHistoryRepository,
+    private val settingsRepository: com.scannerpro.lectorqr.domain.repository.ISettingsRepository,
+    private val fileHelper: com.scannerpro.lectorqr.util.FileHelper
 ) : ViewModel() {
 
+    private val prefs = context.getSharedPreferences("qr_email", android.content.Context.MODE_PRIVATE)
     private val _uiState = MutableStateFlow(CreateEmailUiState())
     val uiState: StateFlow<CreateEmailUiState> = _uiState.asStateFlow()
+
+    init {
+        loadDraft()
+    }
+
+    private fun loadDraft() {
+        val draftEmail = prefs.getString("email", "") ?: ""
+        val draftTitle = prefs.getString("title", "Email") ?: "Email"
+        val fgColor = prefs.getInt("foregroundColor", android.graphics.Color.BLACK)
+        val bgColor = prefs.getInt("backgroundColor", android.graphics.Color.WHITE)
+        
+        if (draftEmail.isNotEmpty()) {
+            _uiState.update { it.copy(
+                email = draftEmail,
+                customName = draftTitle,
+                foregroundColor = fgColor,
+                backgroundColor = bgColor
+            ) }
+            prefs.edit().clear().apply()
+        }
+    }
 
     fun onEmailChanged(email: String) = _uiState.update { it.copy(email = email) }
     fun onSubjectChanged(subject: String) = _uiState.update { it.copy(subject = subject) }
     fun onMessageChanged(message: String) = _uiState.update { it.copy(message = message) }
+    fun onForegroundColorChanged(color: Int) = _uiState.update { it.copy(foregroundColor = color) }
+    fun onBackgroundColorChanged(color: Int) = _uiState.update { it.copy(backgroundColor = color) }
+
+    fun toggleFavorite() {
+        _uiState.update { it.copy(isFavorite = !it.isFavorite) }
+        syncWithHistory()
+    }
 
     fun generateQr() {
         val email = _uiState.value.email.trim()
@@ -69,13 +106,89 @@ class CreateEmailViewModel @Inject constructor(
                     if (message.isNotEmpty()) append("body=${android.net.Uri.encode(message)}")
                 }
             }
-            val bitmap = generateQrUseCase(mailtoUrl)
+            val logoBitmap = if (settingsRepository.isPremium.value) {
+                com.scannerpro.lectorqr.util.BitmapUtils.getDrawableAsBitmap(context, com.scannerpro.lectorqr.R.drawable.ic_email, 100, _uiState.value.foregroundColor)
+            } else null
+
+            val bitmap = generateQrUseCase(
+                text = mailtoUrl,
+                foregroundColor = _uiState.value.foregroundColor,
+                backgroundColor = _uiState.value.backgroundColor,
+                logo = logoBitmap
+            )
             _uiState.update { it.copy(qrBitmap = bitmap, isLoading = false, showResult = true) }
+            syncWithHistory()
+        }
+    }
+
+    private fun syncWithHistory() {
+        viewModelScope.launch {
+            val state = _uiState.value
+            if (state.email.isBlank()) return@launch
+            
+            val mailtoUrl = buildString {
+                append("mailto:${state.email}")
+                if (state.subject.isNotBlank() || state.message.isNotBlank()) {
+                    append("?")
+                    if (state.subject.isNotBlank()) append("subject=${android.net.Uri.encode(state.subject)}")
+                    if (state.subject.isNotBlank() && state.message.isNotBlank()) append("&")
+                    if (state.message.isNotBlank()) append("body=${android.net.Uri.encode(state.message)}")
+                }
+            }
+            
+            val imagePath = if (state.qrBitmap != null) {
+                fileHelper.saveBitmapToInternalStorage(context, state.qrBitmap!!, "EMAIL_${System.currentTimeMillis()}")
+            } else null
+
+            val barcodeResult = com.scannerpro.lectorqr.domain.model.BarcodeResult(
+                id = if (state.scanId != -1L) state.scanId else 0L,
+                displayValue = state.email,
+                rawValue = mailtoUrl,
+                format = 256, // QR_CODE
+                type = com.google.mlkit.vision.barcode.common.Barcode.TYPE_EMAIL,
+                timestamp = System.currentTimeMillis(),
+                isFavorite = state.isFavorite,
+                imagePath = imagePath,
+                customName = state.customName,
+                foregroundColor = state.foregroundColor,
+                backgroundColor = state.backgroundColor
+            )
+            val newId = historyRepository.insertScan(barcodeResult)
+            _uiState.update { it.copy(scanId = newId) }
         }
     }
 
     fun backToEdit() {
         _uiState.update { it.copy(showResult = false) }
+    }
+
+    fun deleteQr() {
+        _uiState.update { it.copy(showResult = false, email = "", subject = "", message = "", qrBitmap = null, scanId = -1L) }
+    }
+
+    fun exportToTxt(isShare: Boolean = true) {
+        val email = _uiState.value.email
+        if (email.isBlank()) return
+        val emailData = "Email: $email\nAsunto: ${_uiState.value.subject}\nMensaje: ${_uiState.value.message}"
+        val filename = "${_uiState.value.customName}.txt"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/plain", emailData)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/plain", emailData)
+        }
+    }
+
+    fun exportToCsv(isShare: Boolean = true) {
+        val email = _uiState.value.email
+        if (email.isBlank()) return
+        val header = "Email,Asunto,Mensaje\n"
+        val row = "\"$email\",\"${_uiState.value.subject.replace("\"", "\"\"")}\",\"${_uiState.value.message.replace("\"", "\"\"")}\""
+        val filename = "${_uiState.value.customName}.csv"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/csv", header + row)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/csv", header + row)
+        }
     }
 
     fun saveToGallery() {
@@ -135,6 +248,12 @@ class CreateEmailViewModel @Inject constructor(
             android.util.Log.e("CreateEmailVM", "Error sharing", e)
         }
     }
+
+    fun updateCustomName(name: String) {
+        _uiState.update { it.copy(customName = name) }
+        syncWithHistory()
+    }
+
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -145,6 +264,8 @@ fun CreateEmailScreen(
     viewModel: CreateEmailViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var showMenu by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -157,8 +278,107 @@ fun CreateEmailScreen(
                 },
                 actions = {
                     if (uiState.showResult) {
-                        IconButton(onClick = { /* Menu */ }) {
+                        IconButton(onClick = { showMenu = true }) {
                             Icon(Icons.Default.MoreVert, contentDescription = "Más", tint = MaterialTheme.colorScheme.onPrimary)
+                        }
+                        var subMenu by remember { mutableStateOf<String?>(null) }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { 
+                                showMenu = false 
+                                subMenu = null
+                            }
+                        ) {
+                            when (subMenu) {
+                                null -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Eliminar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.deleteQr()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Renombrar") },
+                                        onClick = {
+                                            showMenu = false
+                                            showRenameDialog = true
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("TXT") },
+                                        onClick = { subMenu = "TXT" },
+                                        leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("CSV") },
+                                        onClick = { subMenu = "CSV" },
+                                        leadingIcon = { Icon(Icons.Default.TableChart, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Editar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.backToEdit()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.History, contentDescription = null) }
+                                    )
+                                }
+                                "TXT" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                                "CSV" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                            }
                         }
                     } else {
                         IconButton(onClick = onMenuClick) {
@@ -174,11 +394,17 @@ fun CreateEmailScreen(
         if (uiState.showResult && uiState.qrBitmap != null) {
             com.scannerpro.lectorqr.presentation.ui.create.components.StandardResultView(
                 paddingValues = paddingValues,
-                title = "Mi código",
+                title = uiState.customName,
                 qrBitmap = uiState.qrBitmap!!,
                 onSave = { viewModel.saveToGallery() },
                 onShare = { viewModel.shareQr() },
-                onEditName = { /* Rename Dialog */ },
+                onEditName = { showRenameDialog = true },
+                onFavoriteClick = { viewModel.toggleFavorite() },
+                onExportTxt = { viewModel.exportToTxt() },
+                onExportCsv = { viewModel.exportToCsv() },
+                isFavorite = uiState.isFavorite,
+                qrBackgroundColor = uiState.backgroundColor,
+                icon = { Icon(Icons.Default.Email, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(28.dp)) },
                 content = listOf(
                     "Email: ${uiState.email}",
                     if (uiState.subject.isNotBlank()) "Asunto: ${uiState.subject}" else "",
@@ -245,6 +471,22 @@ fun CreateEmailScreen(
                     maxLines = 6
                 )
 
+                val isPremium = com.scannerpro.lectorqr.presentation.ui.theme.LocalIsPremium.current
+                
+                com.scannerpro.lectorqr.presentation.ui.create.components.ColorPickerSection(
+                    title = "Color de primer plano",
+                    selectedColor = uiState.foregroundColor,
+                    isPremium = isPremium,
+                    onColorSelected = { viewModel.onForegroundColorChanged(it) }
+                )
+                
+                com.scannerpro.lectorqr.presentation.ui.create.components.ColorPickerSection(
+                    title = "Color de fondo",
+                    selectedColor = uiState.backgroundColor,
+                    isPremium = isPremium,
+                    onColorSelected = { viewModel.onBackgroundColorChanged(it) }
+                )
+
                 Button(
                     onClick = { viewModel.generateQr() },
                     modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -261,5 +503,34 @@ fun CreateEmailScreen(
                 }
             }
         }
+    }
+    if (showRenameDialog) {
+        var dialogTitle by remember(uiState.customName) { mutableStateOf(uiState.customName) }
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Renombrar") },
+            text = {
+                OutlinedTextField(
+                    value = dialogTitle,
+                    onValueChange = { dialogTitle = it },
+                    label = { Text("Nombre") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.updateCustomName(dialogTitle)
+                    showRenameDialog = false
+                }) {
+                    Text("Aceptar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 }

@@ -46,47 +46,106 @@ fun CreateQrScreen(
                 },
                 actions = {
                     if (uiState.showResult) {
-                        Box {
-                            IconButton(onClick = { showMenu = true }) {
-                                Icon(imageVector = Icons.Default.MoreVert, contentDescription = "Options", tint = MaterialTheme.colorScheme.onPrimary)
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(imageVector = Icons.Default.MoreVert, contentDescription = "Options", tint = MaterialTheme.colorScheme.onPrimary)
+                        }
+                        var subMenu by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { 
+                                showMenu = false 
+                                subMenu = null
                             }
-                            DropdownMenu(
-                                expanded = showMenu,
-                                onDismissRequest = { showMenu = false },
-                                modifier = androidx.compose.ui.Modifier.background(MaterialTheme.colorScheme.surface)
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("Eliminar", color = MaterialTheme.colorScheme.onSurface) },
-                                    onClick = { 
-                                        showMenu = false
-                                        viewModel.deleteCurrentQr()
-                                    },
-                                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Exportar TXT", color = MaterialTheme.colorScheme.onSurface) },
-                                    onClick = { 
-                                        showMenu = false
-                                        viewModel.exportAsTxt()
-                                    },
-                                    leadingIcon = { Icon(Icons.Default.TextSnippet, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Exportar CSV", color = MaterialTheme.colorScheme.onSurface) },
-                                    onClick = { 
-                                        showMenu = false
-                                        viewModel.exportAsCsv()
-                                    },
-                                    leadingIcon = { Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Renombrar", color = MaterialTheme.colorScheme.onSurface) },
-                                    onClick = { 
-                                        showMenu = false
-                                        showRenameDialog = true
-                                    },
-                                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) }
-                                )
+                        ) {
+                            when (subMenu) {
+                                null -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Eliminar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.deleteQr()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Renombrar") },
+                                        onClick = {
+                                            showMenu = false
+                                            showRenameDialog = true
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("TXT") },
+                                        onClick = { subMenu = "TXT" },
+                                        leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("CSV") },
+                                        onClick = { subMenu = "CSV" },
+                                        leadingIcon = { Icon(Icons.Default.TableChart, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Editar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.backToEdit()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.History, contentDescription = null) }
+                                    )
+                                }
+                                "TXT" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                                "CSV" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
                             }
                         }
                     } else {
@@ -113,6 +172,8 @@ fun CreateQrScreen(
                 onEditName = { showRenameDialog = true },
                 isFavorite = uiState.isFavorite,
                 onFavoriteClick = { viewModel.toggleFavorite() },
+                onExportTxt = { viewModel.exportToTxt() },
+                onExportCsv = { viewModel.exportToCsv() },
                 content = listOfNotNull(
                     if (uiState.fullName.isNotBlank()) "Nombre: ${uiState.fullName}" else null,
                     if (uiState.organization.isNotBlank()) "Organización: ${uiState.organization}" else null,
@@ -120,7 +181,9 @@ fun CreateQrScreen(
                     if (uiState.phone.isNotBlank()) "Teléfono: ${uiState.phone}" else null,
                     if (uiState.email.isNotBlank()) "Email: ${uiState.email}" else null,
                     if (uiState.notes.isNotBlank()) "Notas: ${uiState.notes}" else null
-                )
+                ),
+                qrBackgroundColor = uiState.backgroundColor,
+                icon = { Icon(Icons.Default.Person, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(28.dp)) }
             )
         } else {
             Column(
@@ -204,6 +267,22 @@ fun CreateQrScreen(
                     label = "Notas",
                     singleLine = false,
                     modifier = Modifier.height(120.dp)
+                )
+
+                val isPremium = com.scannerpro.lectorqr.presentation.ui.theme.LocalIsPremium.current
+                
+                com.scannerpro.lectorqr.presentation.ui.create.components.ColorPickerSection(
+                    title = "Color de primer plano",
+                    selectedColor = uiState.foregroundColor,
+                    isPremium = isPremium,
+                    onColorSelected = { viewModel.onForegroundColorChanged(it) }
+                )
+                
+                com.scannerpro.lectorqr.presentation.ui.create.components.ColorPickerSection(
+                    title = "Color de fondo",
+                    selectedColor = uiState.backgroundColor,
+                    isPremium = isPremium,
+                    onColorSelected = { viewModel.onBackgroundColorChanged(it) }
                 )
 
                 Spacer(Modifier.height(40.dp))

@@ -1,7 +1,7 @@
 package com.scannerpro.lectorqr
 
+import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,7 +23,7 @@ import javax.inject.Inject
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
     
     @Inject
     lateinit var interstitialAdManager: InterstitialAdManager
@@ -41,7 +41,6 @@ class MainActivity : ComponentActivity() {
             val themeMode by settingsViewModel.themeMode.collectAsState()
             val primaryColorLong by settingsViewModel.primaryColor.collectAsState()
             val isPremium by settingsViewModel.isPremium.collectAsState()
-            android.util.Log.d("MainActivity", "isPremium global state: $isPremium")
             
             val isDarkTheme = when(themeMode) {
                 1 -> false

@@ -42,20 +42,49 @@ data class SocialUiState(
     val showResult: Boolean = false,
     val customName: String = "",
     val isFavorite: Boolean = false,
-    val scanId: Long = -1L
+    val scanId: Long = -1L,
+    val foregroundColor: Int = android.graphics.Color.BLACK,
+    val backgroundColor: Int = android.graphics.Color.WHITE
 )
 
 @HiltViewModel
 class SocialViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
     private val generateQrUseCase: GenerateQrUseCase,
-    private val historyRepository: IHistoryRepository
+    private val historyRepository: IHistoryRepository,
+    private val settingsRepository: com.scannerpro.lectorqr.domain.repository.ISettingsRepository,
+    private val fileHelper: com.scannerpro.lectorqr.util.FileHelper
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SocialUiState())
     val uiState: StateFlow<SocialUiState> = _uiState.asStateFlow()
 
+    private val prefs = context.getSharedPreferences("qr_social", android.content.Context.MODE_PRIVATE)
+
+    init {
+        loadDraft()
+    }
+
+    private fun loadDraft() {
+        val draftInput = prefs.getString("inputValue", "") ?: ""
+        val draftTitle = prefs.getString("title", "Social") ?: "Social"
+        val fgColor = prefs.getInt("foregroundColor", android.graphics.Color.BLACK)
+        val bgColor = prefs.getInt("backgroundColor", android.graphics.Color.WHITE)
+        
+        if (draftInput.isNotEmpty()) {
+            _uiState.update { it.copy(
+                inputValue = draftInput,
+                customName = draftTitle,
+                foregroundColor = fgColor,
+                backgroundColor = bgColor
+            ) }
+            prefs.edit().clear().apply()
+        }
+    }
+
     fun onInputChanged(value: String) = _uiState.update { it.copy(inputValue = value) }
+    fun onForegroundColorChanged(color: Int) = _uiState.update { it.copy(foregroundColor = color) }
+    fun onBackgroundColorChanged(color: Int) = _uiState.update { it.copy(backgroundColor = color) }
     
     fun initType(type: String) {
         if (_uiState.value.customName.isBlank()) {
@@ -87,39 +116,97 @@ class SocialViewModel @Inject constructor(
                 else -> input
             }
             
-            val bitmap = generateQrUseCase(url)
+            val logoRes = when (type) {
+                "WhatsApp" -> R.drawable.ic_whatsapp
+                "Instagram" -> R.drawable.ic_instagram
+                "Facebook" -> R.drawable.ic_facebook
+                "YouTube" -> R.drawable.ic_youtube
+                "Twitter" -> R.drawable.ic_twitter_x
+                "LinkedIn" -> R.drawable.ic_linkedin
+                "TikTok" -> R.drawable.ic_tiktok
+                else -> null
+            }
+            
+            val logoBitmap = if (settingsRepository.isPremium.value && logoRes != null) {
+                com.scannerpro.lectorqr.util.BitmapUtils.getDrawableAsBitmap(context, logoRes, 100)
+            } else null
+            
+            val bitmap = generateQrUseCase(
+                text = url,
+                foregroundColor = _uiState.value.foregroundColor,
+                backgroundColor = _uiState.value.backgroundColor,
+                logo = logoBitmap
+            )
             _uiState.update { it.copy(qrBitmap = bitmap, isLoading = false, showResult = true) }
+            syncWithHistory(url)
         }
     }
 
     fun backToEdit() = _uiState.update { it.copy(showResult = false) }
 
-    fun toggleFavorite() {
-        val newState = !_uiState.value.isFavorite
-        _uiState.update { it.copy(isFavorite = newState) }
-        syncWithHistory()
+    fun deleteQr() {
+        _uiState.update { it.copy(showResult = false, inputValue = "", qrBitmap = null, scanId = -1L) }
     }
 
-    private fun syncWithHistory() {
+    fun exportToTxt(isShare: Boolean = true) {
+        val input = _uiState.value.inputValue
+        if (input.isBlank()) return
+        val socialData = "Tipo: ${_uiState.value.customName}\nContenido: $input"
+        val filename = "${_uiState.value.customName}.txt"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/plain", socialData)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/plain", socialData)
+        }
+    }
+
+    fun exportToCsv(isShare: Boolean = true) {
+        val input = _uiState.value.inputValue
+        if (input.isBlank()) return
+        val header = "Tipo,Contenido\n"
+        val row = "\"${_uiState.value.customName}\",\"$input\""
+        val filename = "${_uiState.value.customName}.csv"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/csv", header + row)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/csv", header + row)
+        }
+    }
+
+    fun toggleFavorite(type: String) {
+        val newState = !_uiState.value.isFavorite
+        _uiState.update { it.copy(isFavorite = newState) }
+        // We need the generated URL here too
+        generateQr(type) // This will call syncWithHistory
+    }
+
+    private fun syncWithHistory(generatedUrl: String? = null) {
         viewModelScope.launch {
             val state = _uiState.value
-            if (state.isFavorite) {
-                val barcodeResult = com.scannerpro.lectorqr.domain.model.BarcodeResult(
-                    id = if (state.scanId != -1L) state.scanId else 0L,
-                    displayValue = state.inputValue,
-                    rawValue = state.inputValue, // Should probably be the generated URL, but inputValue is what the user typed
-                    format = 256, // QR_CODE
-                    type = 0,     // TEXT / URL
-                    timestamp = System.currentTimeMillis(),
-                    isFavorite = true,
-                    customName = state.customName
-                )
-                val newId = historyRepository.insertScan(barcodeResult)
-                _uiState.update { it.copy(scanId = newId) }
-            } else if (state.scanId != -1L) {
-                historyRepository.deleteScan(state.scanId)
-                _uiState.update { it.copy(scanId = -1L) }
-            }
+            if (state.inputValue.isBlank()) return@launch
+            
+            // Re-generate URL if not provided
+            val url = generatedUrl ?: "" // This is simplified for favorite toggle
+            
+            val imagePath = if (state.qrBitmap != null) {
+                fileHelper.saveBitmapToInternalStorage(context, state.qrBitmap!!, "SOCIAL_${System.currentTimeMillis()}")
+            } else null
+
+            val barcodeResult = com.scannerpro.lectorqr.domain.model.BarcodeResult(
+                id = if (state.scanId != -1L) state.scanId else 0L,
+                displayValue = state.inputValue,
+                rawValue = url,
+                format = 256, // QR_CODE
+                type = com.google.mlkit.vision.barcode.common.Barcode.TYPE_URL,
+                timestamp = System.currentTimeMillis(),
+                isFavorite = state.isFavorite,
+                imagePath = imagePath,
+                customName = state.customName,
+                foregroundColor = state.foregroundColor,
+                backgroundColor = state.backgroundColor
+            )
+            val newId = historyRepository.insertScan(barcodeResult)
+            _uiState.update { it.copy(scanId = newId) }
         }
     }
 
@@ -180,6 +267,12 @@ class SocialViewModel @Inject constructor(
             android.util.Log.e("SocialVM", "Error sharing", e)
         }
     }
+
+    fun updateCustomName(name: String, type: String) {
+        _uiState.update { it.copy(customName = name) }
+        generateQr(type)
+    }
+
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -191,6 +284,8 @@ fun CreateSocialScreen(
     viewModel: SocialViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var showMenu by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
     
     LaunchedEffect(type) {
         viewModel.initType(type)
@@ -237,13 +332,112 @@ fun CreateSocialScreen(
                     }
                 },
                 actions = {
-                    if (!uiState.showResult) {
-                        IconButton(onClick = onMenuClick) {
-                            Icon(Icons.Default.Menu, contentDescription = "Menú", tint = MaterialTheme.colorScheme.onPrimary)
+                    if (uiState.showResult) {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Más", tint = MaterialTheme.colorScheme.onPrimary)
+                        }
+                        var subMenu by remember { mutableStateOf<String?>(null) }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { 
+                                showMenu = false 
+                                subMenu = null
+                            }
+                        ) {
+                            when (subMenu) {
+                                null -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Eliminar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.deleteQr()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Renombrar") },
+                                        onClick = {
+                                            showMenu = false
+                                            showRenameDialog = true
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("TXT") },
+                                        onClick = { subMenu = "TXT" },
+                                        leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("CSV") },
+                                        onClick = { subMenu = "CSV" },
+                                        leadingIcon = { Icon(Icons.Default.TableChart, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Editar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.backToEdit()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.History, contentDescription = null) }
+                                    )
+                                }
+                                "TXT" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                                "CSV" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                            }
                         }
                     } else {
-                        IconButton(onClick = { /* More options */ }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "Más", tint = MaterialTheme.colorScheme.onPrimary)
+                        IconButton(onClick = onMenuClick) {
+                            Icon(Icons.Default.Menu, contentDescription = "Menú", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
                 },
@@ -259,9 +453,20 @@ fun CreateSocialScreen(
                 qrBitmap = uiState.qrBitmap!!,
                 onSave = { viewModel.saveToGallery() },
                 onShare = { viewModel.shareQr() },
-                onEditName = { /* Rename Dialog */ },
+                onEditName = { showRenameDialog = true },
                 isFavorite = uiState.isFavorite,
-                onFavoriteClick = { viewModel.toggleFavorite() },
+                onFavoriteClick = { viewModel.toggleFavorite(type) },
+                onExportTxt = { viewModel.exportToTxt() },
+                onExportCsv = { viewModel.exportToCsv() },
+                qrBackgroundColor = uiState.backgroundColor,
+                icon = {
+                    Icon(
+                        painter = painter,
+                        contentDescription = null,
+                        tint = Color.Unspecified,
+                        modifier = Modifier.size(28.dp)
+                    )
+                },
                 content = listOf("$type: ${uiState.inputValue}")
             )
         } else {
@@ -307,6 +512,22 @@ fun CreateSocialScreen(
                     }
                 )
 
+                val isPremium = com.scannerpro.lectorqr.presentation.ui.theme.LocalIsPremium.current
+                
+                com.scannerpro.lectorqr.presentation.ui.create.components.ColorPickerSection(
+                    title = "Color de primer plano",
+                    selectedColor = uiState.foregroundColor,
+                    isPremium = isPremium,
+                    onColorSelected = { viewModel.onForegroundColorChanged(it) }
+                )
+                
+                com.scannerpro.lectorqr.presentation.ui.create.components.ColorPickerSection(
+                    title = "Color de fondo",
+                    selectedColor = uiState.backgroundColor,
+                    isPremium = isPremium,
+                    onColorSelected = { viewModel.onBackgroundColorChanged(it) }
+                )
+
                 Button(
                     onClick = { viewModel.generateQr(type) },
                     modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -323,5 +544,34 @@ fun CreateSocialScreen(
                 }
             }
         }
+    }
+    if (showRenameDialog) {
+        var dialogTitle by remember(uiState.customName) { mutableStateOf(uiState.customName) }
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Renombrar") },
+            text = {
+                OutlinedTextField(
+                    value = dialogTitle,
+                    onValueChange = { dialogTitle = it },
+                    label = { Text("Nombre") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.updateCustomName(dialogTitle, type)
+                    showRenameDialog = false
+                }) {
+                    Text("Aceptar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 }

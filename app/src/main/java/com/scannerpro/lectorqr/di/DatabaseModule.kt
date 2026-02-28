@@ -22,7 +22,8 @@ object DatabaseModule {
             context,
             ScanDatabase::class.java,
             "lector_qr.db"
-        ).fallbackToDestructiveMigration()
+        ).addMigrations(ScanDatabase.MIGRATION_2_3)
+         .fallbackToDestructiveMigration()
          .build()
     }
 

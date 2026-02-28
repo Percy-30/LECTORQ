@@ -15,7 +15,9 @@ data class ScanEntity(
     val timestamp: Long,
     val isFavorite: Boolean = false,
     val imagePath: String? = null,
-    val customName: String? = null
+    val customName: String? = null,
+    val foregroundColor: Int? = null,
+    val backgroundColor: Int? = null
 )
 
 fun ScanEntity.toDomain() = BarcodeResult(
@@ -27,7 +29,9 @@ fun ScanEntity.toDomain() = BarcodeResult(
     timestamp = timestamp,
     isFavorite = isFavorite,
     imagePath = imagePath,
-    customName = customName
+    customName = customName,
+    foregroundColor = foregroundColor,
+    backgroundColor = backgroundColor
 )
 
 fun BarcodeResult.toEntity() = ScanEntity(
@@ -39,5 +43,7 @@ fun BarcodeResult.toEntity() = ScanEntity(
     timestamp = timestamp,
     isFavorite = isFavorite,
     imagePath = imagePath,
-    customName = customName
+    customName = customName,
+    foregroundColor = foregroundColor,
+    backgroundColor = backgroundColor
 )

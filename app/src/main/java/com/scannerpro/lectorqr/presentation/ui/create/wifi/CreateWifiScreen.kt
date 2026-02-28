@@ -37,22 +37,68 @@ data class CreateWifiUiState(
     val qrBitmap: Bitmap? = null,
     val isLoading: Boolean = false,
     val showResult: Boolean = false,
-    val showPassword: Boolean = false
+    val showPassword: Boolean = false,
+    val foregroundColor: Int = android.graphics.Color.BLACK,
+    val backgroundColor: Int = android.graphics.Color.WHITE,
+    val customName: String = "WiFi",
+    val scanId: Long = -1L,
+    val isFavorite: Boolean = false
 )
 
 @HiltViewModel
 class CreateWifiViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
-    private val generateQrUseCase: GenerateQrUseCase
+    private val generateQrUseCase: GenerateQrUseCase,
+    private val historyRepository: com.scannerpro.lectorqr.domain.repository.IHistoryRepository,
+    private val settingsRepository: com.scannerpro.lectorqr.domain.repository.ISettingsRepository,
+    private val fileHelper: com.scannerpro.lectorqr.util.FileHelper
 ) : ViewModel() {
 
+    private val prefs = context.getSharedPreferences("qr_wifi", android.content.Context.MODE_PRIVATE)
     private val _uiState = MutableStateFlow(CreateWifiUiState())
     val uiState: StateFlow<CreateWifiUiState> = _uiState.asStateFlow()
+
+    init {
+        loadDraft()
+    }
+
+    private fun loadDraft() {
+        val draftRaw = prefs.getString("rawValue", "") ?: ""
+        val draftTitle = prefs.getString("title", "WiFi") ?: "WiFi"
+        val fgColor = prefs.getInt("foregroundColor", android.graphics.Color.BLACK)
+        val bgColor = prefs.getInt("backgroundColor", android.graphics.Color.WHITE)
+        
+        if (draftRaw.isNotEmpty() && draftRaw.startsWith("WIFI:")) {
+            val ssid = draftRaw.substringAfter("S:", "").substringBefore(";", "")
+            val encryption = draftRaw.substringAfter("T:", "WPA").substringBefore(";", "")
+            val password = draftRaw.substringAfter("P:", "").substringBefore(";", "")
+            
+            _uiState.update { it.copy(
+                ssid = ssid,
+                password = password,
+                securityType = if (encryption.isNotEmpty()) encryption else "WPA/WPA2/WPA3",
+                customName = draftTitle,
+                foregroundColor = fgColor,
+                backgroundColor = bgColor
+            ) }
+            prefs.edit().clear().apply()
+        }
+    }
 
     fun onSsidChanged(ssid: String) = _uiState.update { it.copy(ssid = ssid) }
     fun onPasswordChanged(password: String) = _uiState.update { it.copy(password = password) }
     fun onSecurityTypeChanged(type: String) = _uiState.update { it.copy(securityType = type) }
     fun togglePasswordVisibility() = _uiState.update { it.copy(showPassword = !it.showPassword) }
+    fun onForegroundColorChanged(color: Int) = _uiState.update { it.copy(foregroundColor = color) }
+    fun onBackgroundColorChanged(color: Int) = _uiState.update { it.copy(backgroundColor = color) }
+    fun updateCustomName(name: String) {
+        _uiState.update { it.copy(customName = name) }
+        syncWithHistory()
+    }
+    fun toggleFavorite() {
+        _uiState.update { it.copy(isFavorite = !it.isFavorite) }
+        syncWithHistory()
+    }
 
     fun generateQr() {
         val ssid = _uiState.value.ssid.trim()
@@ -69,8 +115,49 @@ class CreateWifiViewModel @Inject constructor(
                 }
                 append(";")
             }
-            val bitmap = generateQrUseCase(wifiString)
+            val logoBitmap = if (settingsRepository.isPremium.value) {
+                com.scannerpro.lectorqr.util.BitmapUtils.getDrawableAsBitmap(context, com.scannerpro.lectorqr.R.drawable.ic_wifi, 100, _uiState.value.foregroundColor)
+            } else null
+
+            val bitmap = generateQrUseCase(
+                text = wifiString,
+                foregroundColor = _uiState.value.foregroundColor,
+                backgroundColor = _uiState.value.backgroundColor,
+                logo = logoBitmap
+            )
             _uiState.update { it.copy(qrBitmap = bitmap, isLoading = false, showResult = true) }
+            syncWithHistory()
+        }
+    }
+
+    private fun syncWithHistory() {
+        viewModelScope.launch {
+            val state = _uiState.value
+            val imagePath = if (state.qrBitmap != null) {
+                fileHelper.saveBitmapToInternalStorage(context, state.qrBitmap!!, "WIFI_${System.currentTimeMillis()}")
+            } else null
+
+            val barcodeResult = com.scannerpro.lectorqr.domain.model.BarcodeResult(
+                id = if (state.scanId != -1L) state.scanId else 0L,
+                displayValue = state.ssid,
+                rawValue = buildString {
+                    append("WIFI:")
+                    append("S:${escape(state.ssid)};")
+                    append("T:${state.securityType};")
+                    if (state.password.isNotEmpty()) append("P:${escape(state.password)};")
+                    append(";")
+                },
+                format = 256, // QR_CODE
+                type = com.google.mlkit.vision.barcode.common.Barcode.TYPE_WIFI,
+                timestamp = System.currentTimeMillis(),
+                isFavorite = state.isFavorite,
+                imagePath = imagePath,
+                customName = state.customName,
+                foregroundColor = state.foregroundColor,
+                backgroundColor = state.backgroundColor
+            )
+            val newId = historyRepository.insertScan(barcodeResult)
+            _uiState.update { it.copy(scanId = newId) }
         }
     }
 
@@ -84,6 +171,35 @@ class CreateWifiViewModel @Inject constructor(
 
     fun backToEdit() {
         _uiState.update { it.copy(showResult = false) }
+    }
+
+    fun deleteQr() {
+        _uiState.update { it.copy(showResult = false, ssid = "", password = "", qrBitmap = null, scanId = -1L) }
+    }
+
+    fun exportToTxt(isShare: Boolean = true) {
+        val ssid = _uiState.value.ssid
+        if (ssid.isBlank()) return
+        val wifiData = "SSID: $ssid\nPassword: ${_uiState.value.password}\nSecurity: ${_uiState.value.securityType}"
+        val filename = "${_uiState.value.customName}.txt"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/plain", wifiData)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/plain", wifiData)
+        }
+    }
+
+    fun exportToCsv(isShare: Boolean = true) {
+        val ssid = _uiState.value.ssid
+        if (ssid.isBlank()) return
+        val header = "SSID,Password,Security\n"
+        val row = "\"$ssid\",\"${_uiState.value.password}\",\"${_uiState.value.securityType}\""
+        val filename = "${_uiState.value.customName}.csv"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/csv", header + row)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/csv", header + row)
+        }
     }
 
     fun saveToGallery() {
@@ -154,6 +270,9 @@ fun CreateWifiScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var expanded by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
+    var newTitle by remember(uiState.customName) { mutableStateOf(uiState.customName) }
 
     Scaffold(
         topBar = {
@@ -166,8 +285,107 @@ fun CreateWifiScreen(
                 },
                 actions = {
                     if (uiState.showResult) {
-                        IconButton(onClick = { /* Menu */ }) {
+                        IconButton(onClick = { showMenu = true }) {
                             Icon(Icons.Default.MoreVert, contentDescription = "Más", tint = MaterialTheme.colorScheme.onPrimary)
+                        }
+                        var subMenu by remember { mutableStateOf<String?>(null) }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { 
+                                showMenu = false 
+                                subMenu = null
+                            }
+                        ) {
+                            when (subMenu) {
+                                null -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Eliminar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.deleteQr()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Renombrar") },
+                                        onClick = {
+                                            showMenu = false
+                                            showRenameDialog = true
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("TXT") },
+                                        onClick = { subMenu = "TXT" },
+                                        leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("CSV") },
+                                        onClick = { subMenu = "CSV" },
+                                        leadingIcon = { Icon(Icons.Default.TableChart, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Editar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.backToEdit()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.History, contentDescription = null) }
+                                    )
+                                }
+                                "TXT" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                                "CSV" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                            }
                         }
                     } else {
                         IconButton(onClick = onMenuClick) {
@@ -184,17 +402,23 @@ fun CreateWifiScreen(
             Box(modifier = Modifier.weight(1f)) {
                 if (uiState.showResult && uiState.qrBitmap != null) {
                     com.scannerpro.lectorqr.presentation.ui.create.components.StandardResultView(
-                        paddingValues = PaddingValues(0.dp),
-                        title = "Mi código",
-                        qrBitmap = uiState.qrBitmap!!,
-                        onSave = { viewModel.saveToGallery() },
-                        onShare = { viewModel.shareQr() },
-                        onEditName = { /* Rename Dialog */ },
-                        content = listOf(
-                            "Red: ${uiState.ssid}",
-                            "Seguridad: ${uiState.securityType}"
-                        )
-                    )
+                paddingValues = paddingValues,
+                title = uiState.customName,
+                qrBitmap = uiState.qrBitmap!!,
+                onSave = { viewModel.saveToGallery() },
+                onShare = { viewModel.shareQr() },
+                onEditName = { showRenameDialog = true }, 
+                onFavoriteClick = { viewModel.toggleFavorite() },
+                onExportTxt = { viewModel.exportToTxt() },
+                onExportCsv = { viewModel.exportToCsv() },
+                isFavorite = uiState.isFavorite,
+                qrBackgroundColor = uiState.backgroundColor,
+                icon = { Icon(Icons.Default.Wifi, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(28.dp)) },
+                content = listOf(
+                    "Red: ${uiState.ssid}",
+                    "Seguridad: ${when (uiState.securityType) { "WPA" -> "WPA/WPA2/WPA3"; else -> uiState.securityType }}"
+                )
+            )
                 } else {
                     Column(
                         modifier = Modifier
@@ -228,38 +452,36 @@ fun CreateWifiScreen(
 
                         ExposedDropdownMenuBox(
                             expanded = expanded,
-                            onExpandedChange = { expanded = !expanded }
+                            onExpandedChange = { expanded = !expanded },
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            OutlinedTextField(
-                                value = uiState.securityType,
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Tipo de seguridad") },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                                modifier = Modifier.fillMaxWidth().menuAnchor(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                                )
-                            )
-                            ExposedDropdownMenu(
-                                expanded = expanded,
-                                onDismissRequest = { expanded = false },
-                                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
-                            ) {
-                                listOf("WPA", "WEP", "None").forEach { type ->
-                                    DropdownMenuItem(
-                                        text = { Text(type, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                                        onClick = {
-                                            viewModel.onSecurityTypeChanged(type)
-                                            expanded = false
-                                        }
-                                    )
+                    OutlinedTextField(
+                        value = when (uiState.securityType) {
+                            "WPA" -> "WPA/WPA2/WPA3"
+                            else -> uiState.securityType
+                        },
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Seguridad") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = expanded,
+                        onDismissRequest = { expanded = false }
+                    ) {
+                        listOf("WPA", "WEP", "None").forEach { type ->
+                            DropdownMenuItem(
+                                text = { Text(if (type == "WPA") "WPA/WPA2/WPA3" else type) },
+                                onClick = {
+                                    viewModel.onSecurityTypeChanged(type)
+                                    expanded = false
                                 }
-                            }
+                            )
                         }
+                    }
+                }
 
                         OutlinedTextField(
                             value = uiState.password,
@@ -310,5 +532,34 @@ fun CreateWifiScreen(
                 modifier = Modifier.fillMaxWidth()
             )
         }
+    }
+
+    if (showRenameDialog) {
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Renombrar título") },
+            text = {
+                OutlinedTextField(
+                    value = newTitle,
+                    onValueChange = { newTitle = it },
+                    label = { Text("Nuevo título") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.updateCustomName(newTitle)
+                    showRenameDialog = false
+                }) {
+                    Text("OK")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 }

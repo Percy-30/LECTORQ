@@ -11,10 +11,12 @@ import javax.inject.Inject
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    val settingsRepository: ISettingsRepository
+    val settingsRepository: ISettingsRepository,
+    private val iconManager: com.scannerpro.lectorqr.util.IconManager
 ) : ViewModel() {
 
     val isPremium = settingsRepository.isPremium
+    val selectedLanguage = settingsRepository.selectedLanguage.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "system")
     val themeMode = settingsRepository.themeMode.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
     val primaryColor = settingsRepository.primaryColor.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0xFF2196F3)
     val isBeepEnabled = settingsRepository.isBeepEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
@@ -30,6 +32,8 @@ class SettingsViewModel @Inject constructor(
     val isOpenUrlAutomaticallyEnabled = settingsRepository.isOpenUrlAutomaticallyEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
     val cameraSelection = settingsRepository.cameraSelection.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
     val searchEngine = settingsRepository.searchEngine.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "Google")
+    val isBiometricEnabled = settingsRepository.isBiometricEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    val currentAppIcon = settingsRepository.currentAppIcon.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "DEFAULT")
     val isManualPremium = settingsRepository.isManualPremium
 
     fun setThemeMode(mode: Int) = viewModelScope.launch { settingsRepository.setThemeMode(mode) }
@@ -48,4 +52,23 @@ class SettingsViewModel @Inject constructor(
     fun setCameraSelection(camera: Int) = viewModelScope.launch { settingsRepository.setCameraSelection(camera) }
     fun setSearchEngine(engine: String) = viewModelScope.launch { settingsRepository.setSearchEngine(engine) }
     fun setManualPremium(enabled: Boolean) = viewModelScope.launch { settingsRepository.setManualPremium(enabled) }
+
+    fun setBiometricEnabled(enabled: Boolean) = viewModelScope.launch { settingsRepository.setBiometricEnabled(enabled) }
+
+    fun setCurrentAppIcon(icon: com.scannerpro.lectorqr.util.AppIcon) = viewModelScope.launch {
+        settingsRepository.setCurrentAppIcon(icon.name)
+        iconManager.changeIcon(icon)
+    }
+
+    fun setSelectedLanguage(languageCode: String) {
+        viewModelScope.launch {
+            settingsRepository.setSelectedLanguage(languageCode)
+            val appLocale: androidx.core.os.LocaleListCompat = if (languageCode == "system") {
+                androidx.core.os.LocaleListCompat.getEmptyLocaleList()
+            } else {
+                androidx.core.os.LocaleListCompat.forLanguageTags(languageCode)
+            }
+            androidx.appcompat.app.AppCompatDelegate.setApplicationLocales(appLocale)
+        }
+    }
 }

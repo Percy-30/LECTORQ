@@ -37,22 +37,75 @@ data class CreateContactUiState(
     val organization: String = "",
     val qrBitmap: Bitmap? = null,
     val isLoading: Boolean = false,
-    val showResult: Boolean = false
+    val showResult: Boolean = false,
+    val customName: String = "Contacto",
+    val foregroundColor: Int = android.graphics.Color.BLACK,
+    val backgroundColor: Int = android.graphics.Color.WHITE,
+    val scanId: Long = -1L,
+    val isFavorite: Boolean = false
 )
 
 @HiltViewModel
 class CreateContactViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
-    private val generateQrUseCase: GenerateQrUseCase
+    private val generateQrUseCase: GenerateQrUseCase,
+    private val historyRepository: com.scannerpro.lectorqr.domain.repository.IHistoryRepository,
+    private val settingsRepository: com.scannerpro.lectorqr.domain.repository.ISettingsRepository,
+    private val fileHelper: com.scannerpro.lectorqr.util.FileHelper
 ) : ViewModel() {
 
+    private val prefs = context.getSharedPreferences("qr_contact", android.content.Context.MODE_PRIVATE)
     private val _uiState = MutableStateFlow(CreateContactUiState())
     val uiState: StateFlow<CreateContactUiState> = _uiState.asStateFlow()
+
+    init {
+        loadDraft()
+    }
+
+    private fun loadDraft() {
+        val draftRaw = prefs.getString("rawValue", "") ?: ""
+        val draftTitle = prefs.getString("title", "Contacto") ?: "Contacto"
+        val fgColor = prefs.getInt("foregroundColor", android.graphics.Color.BLACK)
+        val bgColor = prefs.getInt("backgroundColor", android.graphics.Color.WHITE)
+        
+        if (draftRaw.isNotEmpty() && (draftRaw.startsWith("BEGIN:VCARD") || draftRaw.startsWith("MECARD:"))) {
+            val name = com.scannerpro.lectorqr.util.BarcodeTypeUtils.getFormattedValueWithLabels(
+                com.google.mlkit.vision.barcode.common.Barcode.TYPE_CONTACT_INFO, draftRaw
+            ).find { it.first == com.scannerpro.lectorqr.R.string.field_name }?.second ?: ""
+            val org = com.scannerpro.lectorqr.util.BarcodeTypeUtils.getFormattedValueWithLabels(
+                com.google.mlkit.vision.barcode.common.Barcode.TYPE_CONTACT_INFO, draftRaw
+            ).find { it.first == com.scannerpro.lectorqr.R.string.field_organization }?.second ?: ""
+            val phone = com.scannerpro.lectorqr.util.BarcodeTypeUtils.getFormattedValueWithLabels(
+                com.google.mlkit.vision.barcode.common.Barcode.TYPE_CONTACT_INFO, draftRaw
+            ).find { it.first == com.scannerpro.lectorqr.R.string.field_phone }?.second ?: ""
+            val email = com.scannerpro.lectorqr.util.BarcodeTypeUtils.getFormattedValueWithLabels(
+                com.google.mlkit.vision.barcode.common.Barcode.TYPE_CONTACT_INFO, draftRaw
+            ).find { it.first == com.scannerpro.lectorqr.R.string.field_email }?.second ?: ""
+            
+            _uiState.update { it.copy(
+                name = name,
+                organization = org,
+                phone = phone,
+                email = email,
+                customName = draftTitle,
+                foregroundColor = fgColor,
+                backgroundColor = bgColor
+            ) }
+            prefs.edit().clear().apply()
+        }
+    }
 
     fun onNameChanged(name: String) = _uiState.update { it.copy(name = name) }
     fun onPhoneChanged(phone: String) = _uiState.update { it.copy(phone = phone) }
     fun onEmailChanged(email: String) = _uiState.update { it.copy(email = email) }
     fun onOrganizationChanged(org: String) = _uiState.update { it.copy(organization = org) }
+    fun onForegroundColorChanged(color: Int) = _uiState.update { it.copy(foregroundColor = color) }
+    fun onBackgroundColorChanged(color: Int) = _uiState.update { it.copy(backgroundColor = color) }
+
+    fun toggleFavorite() {
+        _uiState.update { it.copy(isFavorite = !it.isFavorite) }
+        syncWithHistory()
+    }
 
     fun generateQr() {
         val name = _uiState.value.name.trim()
@@ -78,13 +131,89 @@ class CreateContactViewModel @Inject constructor(
                 appendLine("END:VCARD")
             }
             
-            val bitmap = generateQrUseCase(vCard)
+            val logoBitmap = if (settingsRepository.isPremium.value) {
+                com.scannerpro.lectorqr.util.BitmapUtils.getDrawableAsBitmap(context, com.scannerpro.lectorqr.R.drawable.ic_person, 100, _uiState.value.foregroundColor)
+            } else null
+
+            val bitmap = generateQrUseCase(
+                text = vCard,
+                foregroundColor = _uiState.value.foregroundColor,
+                backgroundColor = _uiState.value.backgroundColor,
+                logo = logoBitmap
+            )
             _uiState.update { it.copy(qrBitmap = bitmap, isLoading = false, showResult = true) }
+            syncWithHistory()
+        }
+    }
+
+    private fun syncWithHistory() {
+        viewModelScope.launch {
+            val state = _uiState.value
+            if (state.name.isBlank()) return@launch
+            
+            val vCard = buildString {
+                appendLine("BEGIN:VCARD")
+                appendLine("VERSION:3.0")
+                appendLine("FN:${state.name}")
+                if (state.phone.isNotBlank()) appendLine("TEL:${state.phone}")
+                if (state.email.isNotBlank()) appendLine("EMAIL:${state.email}")
+                if (state.organization.isNotBlank()) appendLine("ORG:${state.organization}")
+                appendLine("END:VCARD")
+            }
+            
+            val imagePath = if (state.qrBitmap != null) {
+                fileHelper.saveBitmapToInternalStorage(context, state.qrBitmap!!, "CONTACT_${System.currentTimeMillis()}")
+            } else null
+
+            val barcodeResult = com.scannerpro.lectorqr.domain.model.BarcodeResult(
+                id = if (state.scanId != -1L) state.scanId else 0L,
+                displayValue = state.name,
+                rawValue = vCard,
+                format = 256, // QR_CODE
+                type = com.google.mlkit.vision.barcode.common.Barcode.TYPE_CONTACT_INFO,
+                timestamp = System.currentTimeMillis(),
+                isFavorite = state.isFavorite,
+                imagePath = imagePath,
+                customName = state.customName,
+                foregroundColor = state.foregroundColor,
+                backgroundColor = state.backgroundColor
+            )
+            val newId = historyRepository.insertScan(barcodeResult)
+            _uiState.update { it.copy(scanId = newId) }
         }
     }
 
     fun backToEdit() {
         _uiState.update { it.copy(showResult = false) }
+    }
+
+    fun deleteQr() {
+        _uiState.update { it.copy(showResult = false, name = "", phone = "", email = "", organization = "", qrBitmap = null, scanId = -1L) }
+    }
+
+    fun exportToTxt(isShare: Boolean = true) {
+        val name = _uiState.value.name
+        if (name.isBlank()) return
+        val contactData = "Nombre: $name\nTeléfono: ${_uiState.value.phone}\nEmail: ${_uiState.value.email}\nOrganización: ${_uiState.value.organization}"
+        val filename = "${_uiState.value.customName}.txt"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/plain", contactData)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/plain", contactData)
+        }
+    }
+
+    fun exportToCsv(isShare: Boolean = true) {
+        val name = _uiState.value.name
+        if (name.isBlank()) return
+        val header = "Nombre,Teléfono,Email,Organización\n"
+        val row = "\"$name\",\"${_uiState.value.phone}\",\"${_uiState.value.email}\",\"${_uiState.value.organization.replace("\"", "\"\"")}\""
+        val filename = "${_uiState.value.customName}.csv"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/csv", header + row)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/csv", header + row)
+        }
     }
 
     fun saveToGallery() {
@@ -144,6 +273,12 @@ class CreateContactViewModel @Inject constructor(
             android.util.Log.e("CreateContactVM", "Error sharing", e)
         }
     }
+
+    fun updateCustomName(name: String) {
+        _uiState.update { it.copy(customName = name) }
+        syncWithHistory()
+    }
+
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -154,6 +289,8 @@ fun CreateContactScreen(
     viewModel: CreateContactViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var showMenu by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -166,8 +303,107 @@ fun CreateContactScreen(
                 },
                 actions = {
                     if (uiState.showResult) {
-                        IconButton(onClick = { /* Menu */ }) {
+                        IconButton(onClick = { showMenu = true }) {
                             Icon(Icons.Default.MoreVert, contentDescription = "Más", tint = MaterialTheme.colorScheme.onPrimary)
+                        }
+                        var subMenu by remember { mutableStateOf<String?>(null) }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { 
+                                showMenu = false 
+                                subMenu = null
+                            }
+                        ) {
+                            when (subMenu) {
+                                null -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Eliminar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.deleteQr()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Renombrar") },
+                                        onClick = {
+                                            showMenu = false
+                                            showRenameDialog = true
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("TXT") },
+                                        onClick = { subMenu = "TXT" },
+                                        leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("CSV") },
+                                        onClick = { subMenu = "CSV" },
+                                        leadingIcon = { Icon(Icons.Default.TableChart, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Editar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.backToEdit()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.History, contentDescription = null) }
+                                    )
+                                }
+                                "TXT" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                                "CSV" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                            }
                         }
                     } else {
                         IconButton(onClick = onMenuClick) {
@@ -183,11 +419,17 @@ fun CreateContactScreen(
         if (uiState.showResult && uiState.qrBitmap != null) {
             com.scannerpro.lectorqr.presentation.ui.create.components.StandardResultView(
                 paddingValues = paddingValues,
-                title = "Mi código",
+                title = uiState.customName,
                 qrBitmap = uiState.qrBitmap!!,
                 onSave = { viewModel.saveToGallery() },
                 onShare = { viewModel.shareQr() },
-                onEditName = { /* Rename Dialog */ },
+                onEditName = { showRenameDialog = true },
+                onFavoriteClick = { viewModel.toggleFavorite() },
+                onExportTxt = { viewModel.exportToTxt() },
+                onExportCsv = { viewModel.exportToCsv() },
+                isFavorite = uiState.isFavorite,
+                qrBackgroundColor = uiState.backgroundColor,
+                icon = { Icon(Icons.Default.Person, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(28.dp)) },
                 content = listOf(
                     "Nombre: ${uiState.name}",
                     if (uiState.phone.isNotBlank()) "Teléfono: ${uiState.phone}" else "",
@@ -275,6 +517,22 @@ fun CreateContactScreen(
                     }
                 )
 
+                val isPremium = com.scannerpro.lectorqr.presentation.ui.theme.LocalIsPremium.current
+                
+                com.scannerpro.lectorqr.presentation.ui.create.components.ColorPickerSection(
+                    title = "Color de primer plano",
+                    selectedColor = uiState.foregroundColor,
+                    isPremium = isPremium,
+                    onColorSelected = { viewModel.onForegroundColorChanged(it) }
+                )
+                
+                com.scannerpro.lectorqr.presentation.ui.create.components.ColorPickerSection(
+                    title = "Color de fondo",
+                    selectedColor = uiState.backgroundColor,
+                    isPremium = isPremium,
+                    onColorSelected = { viewModel.onBackgroundColorChanged(it) }
+                )
+
                 Button(
                     onClick = { viewModel.generateQr() },
                     modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -291,5 +549,34 @@ fun CreateContactScreen(
                 }
             }
         }
+    }
+    if (showRenameDialog) {
+        var dialogTitle by remember(uiState.customName) { mutableStateOf(uiState.customName) }
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Renombrar") },
+            text = {
+                OutlinedTextField(
+                    value = dialogTitle,
+                    onValueChange = { dialogTitle = it },
+                    label = { Text("Nombre") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.updateCustomName(dialogTitle)
+                    showRenameDialog = false
+                }) {
+                    Text("Aceptar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 }

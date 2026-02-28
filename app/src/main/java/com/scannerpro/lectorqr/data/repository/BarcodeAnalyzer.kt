@@ -47,10 +47,17 @@ class BarcodeAnalyzer(
                         val croppedBitmap = rotatedBitmap?.let { bitmap ->
                             barcode.boundingBox?.let { rect ->
                                 try {
-                                    val left = rect.left.coerceIn(0, bitmap.width)
-                                    val top = rect.top.coerceIn(0, bitmap.height)
-                                    val width = rect.width().coerceAtMost(bitmap.width - left)
-                                    val height = rect.height().coerceAtMost(bitmap.height - top)
+                                    // Add padding for a "Quiet Zone" (approx 15%)
+                                    val paddingW = (rect.width() * 0.15f).toInt()
+                                    val paddingH = (rect.height() * 0.15f).toInt()
+                                    
+                                    val left = (rect.left - paddingW).coerceIn(0, bitmap.width)
+                                    val top = (rect.top - paddingH).coerceIn(0, bitmap.height)
+                                    val right = (rect.right + paddingW).coerceIn(0, bitmap.width)
+                                    val bottom = (rect.bottom + paddingH).coerceIn(0, bitmap.height)
+                                    
+                                    val width = (right - left)
+                                    val height = (bottom - top)
                                     
                                     if (width > 0 && height > 0) {
                                         android.graphics.Bitmap.createBitmap(bitmap, left, top, width, height)

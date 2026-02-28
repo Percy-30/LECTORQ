@@ -23,7 +23,9 @@ data class CreateQrUiState(
     val isFavorite: Boolean = false,
     val qrBitmap: Bitmap? = null,
     val isLoading: Boolean = false,
-    val showResult: Boolean = false
+    val showResult: Boolean = false,
+    val foregroundColor: Int = android.graphics.Color.BLACK,
+    val backgroundColor: Int = android.graphics.Color.WHITE
 )
 
 @HiltViewModel
@@ -31,7 +33,8 @@ class CreateQrViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
     private val generateQrUseCase: com.scannerpro.lectorqr.domain.usecase.GenerateQrUseCase,
     private val historyRepository: com.scannerpro.lectorqr.domain.repository.IHistoryRepository,
-    private val settingsRepository: com.scannerpro.lectorqr.domain.repository.ISettingsRepository
+    private val settingsRepository: com.scannerpro.lectorqr.domain.repository.ISettingsRepository,
+    private val fileHelper: com.scannerpro.lectorqr.util.FileHelper
 ) : ViewModel() {
 
     private val prefs = context.getSharedPreferences("qr_profile", android.content.Context.MODE_PRIVATE)
@@ -56,7 +59,9 @@ class CreateQrViewModel @Inject constructor(
             email = prefs.getString("email", "") ?: "",
             notes = prefs.getString("notes", "") ?: "",
             title = prefs.getString("title", "Mi código QR") ?: "Mi código QR",
-            isFavorite = prefs.getBoolean("isFavorite", false)
+            isFavorite = prefs.getBoolean("isFavorite", false),
+            foregroundColor = prefs.getInt("foregroundColor", android.graphics.Color.BLACK),
+            backgroundColor = prefs.getInt("backgroundColor", android.graphics.Color.WHITE)
         ) }
     }
 
@@ -70,6 +75,8 @@ class CreateQrViewModel @Inject constructor(
             putString("notes", _uiState.value.notes)
             putString("title", _uiState.value.title)
             putBoolean("isFavorite", _uiState.value.isFavorite)
+            putInt("foregroundColor", _uiState.value.foregroundColor)
+            putInt("backgroundColor", _uiState.value.backgroundColor)
             apply()
         }
     }
@@ -80,6 +87,8 @@ class CreateQrViewModel @Inject constructor(
     fun onPhoneChanged(it: String) = _uiState.update { state -> state.copy(phone = it) }
     fun onEmailChanged(it: String) = _uiState.update { state -> state.copy(email = it) }
     fun onNotesChanged(it: String) = _uiState.update { state -> state.copy(notes = it) }
+    fun onForegroundColorChanged(it: Int) = _uiState.update { state -> state.copy(foregroundColor = it) }
+    fun onBackgroundColorChanged(it: Int) = _uiState.update { state -> state.copy(backgroundColor = it) }
 
     fun toggleFavorite() {
         val newState = !_uiState.value.isFavorite
@@ -96,7 +105,7 @@ class CreateQrViewModel @Inject constructor(
         }
     }
 
-    fun deleteCurrentQr() {
+    fun deleteQr() {
         if (_uiState.value.isFavorite) {
             viewModelScope.launch {
                 val scanId = prefs.getLong("profileScanId", -1L)
@@ -106,7 +115,7 @@ class CreateQrViewModel @Inject constructor(
                 }
             }
         }
-        _uiState.update { it.copy(showResult = false, isFavorite = false) }
+        _uiState.update { it.copy(showResult = false, isFavorite = false, fullName = "", organization = "", address = "", phone = "", email = "", notes = "", qrBitmap = null) }
         saveProfile()
     }
 
@@ -129,15 +138,22 @@ class CreateQrViewModel @Inject constructor(
                     append("END:VCARD")
                 }.toString()
 
+                val imagePath = if (state.qrBitmap != null) {
+                    fileHelper.saveBitmapToInternalStorage(context, state.qrBitmap!!, "PROFILE_${System.currentTimeMillis()}")
+                } else null
+
                 val barcodeResult = com.scannerpro.lectorqr.domain.model.BarcodeResult(
                     id = if (scanId != -1L) scanId else 0L,
                     displayValue = state.fullName,
                     rawValue = vCard,
                     format = 256, // QR_CODE
-                    type = 1,     // CONTACT_INFO / VCARD
+                    type = com.google.mlkit.vision.barcode.common.Barcode.TYPE_CONTACT_INFO,
                     timestamp = System.currentTimeMillis(),
                     isFavorite = true,
-                    customName = state.title
+                    imagePath = imagePath,
+                    customName = state.title,
+                    foregroundColor = state.foregroundColor,
+                    backgroundColor = state.backgroundColor
                 )
 
                 if (scanId == -1L) {
@@ -173,7 +189,16 @@ class CreateQrViewModel @Inject constructor(
                 append("END:VCARD")
             }.toString()
 
-            val bitmap = generateQrUseCase(vCard)
+            val logoBitmap = if (settingsRepository.isPremium.value) {
+                com.scannerpro.lectorqr.util.BitmapUtils.getDrawableAsBitmap(context, com.scannerpro.lectorqr.R.drawable.ic_person, 100, _uiState.value.foregroundColor)
+            } else null
+
+            val bitmap = generateQrUseCase(
+                text = vCard,
+                foregroundColor = _uiState.value.foregroundColor,
+                backgroundColor = _uiState.value.backgroundColor,
+                logo = logoBitmap
+            )
             _uiState.update { it.copy(qrBitmap = bitmap, isLoading = false, showResult = true) }
             
             if (_uiState.value.isFavorite) {
@@ -271,7 +296,7 @@ class CreateQrViewModel @Inject constructor(
         _uiState.update { it.copy(showResult = false) }
     }
 
-    fun exportAsTxt() {
+    fun exportToTxt(isShare: Boolean = true) {
         val state = _uiState.value
         val content = """
             Nombre: ${state.fullName}
@@ -281,48 +306,23 @@ class CreateQrViewModel @Inject constructor(
             Email: ${state.email}
             Notas: ${state.notes}
         """.trimIndent()
-        saveFileToDownloads("${state.title}.txt", "text/plain", content)
+        val filename = "${state.title}.txt"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/plain", content)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/plain", content)
+        }
     }
 
-    fun exportAsCsv() {
+    fun exportToCsv(isShare: Boolean = true) {
         val state = _uiState.value
-        val content = "Nombre,Organización,Dirección,Teléfono,Email,Notas\n" +
-                "\"${state.fullName}\",\"${state.organization}\",\"${state.address}\",\"${state.phone}\",\"${state.email}\",\"${state.notes}\""
-        saveFileToDownloads("${state.title}.csv", "text/csv", content)
-    }
-
-    private fun saveFileToDownloads(filename: String, mimeType: String, content: String) {
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                    val contentValues = android.content.ContentValues().apply {
-                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
-                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
-                    }
-                    val resolver = context.contentResolver
-                    val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-                    uri?.let {
-                        resolver.openOutputStream(it)?.use { stream ->
-                            stream.write(content.toByteArray())
-                        }
-                        viewModelScope.launch {
-                            android.widget.Toast.makeText(context, "$filename guardado en Descargas", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                } else {
-                    val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-                    val file = java.io.File(downloadsDir, filename)
-                    java.io.FileOutputStream(file).use { stream ->
-                        stream.write(content.toByteArray())
-                    }
-                    viewModelScope.launch {
-                        android.widget.Toast.makeText(context, "$filename guardado en Descargas", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("CreateQrVM", "Error exporting file", e)
-            }
+        val header = "Nombre,Organización,Dirección,Teléfono,Email,Notas\n"
+        val row = "\"${state.fullName}\",\"${state.organization}\",\"${state.address}\",\"${state.phone}\",\"${state.email}\",\"${state.notes.replace("\"", "\"\"")}\""
+        val filename = "${state.title}.csv"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/csv", header + row)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/csv", header + row)
         }
     }
 }

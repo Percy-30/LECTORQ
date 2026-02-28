@@ -27,6 +27,7 @@ fun CreateUrlScreen(
     viewModel: CreateUrlViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var showMenu by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var newTitle by remember(uiState.title) { mutableStateOf(uiState.title) }
 
@@ -45,11 +46,107 @@ fun CreateUrlScreen(
                 },
                 actions = {
                     if (uiState.showResult) {
-                        IconButton(onClick = { viewModel.shareQr() }) {
-                            Icon(Icons.Default.Share, contentDescription = "Compartir", tint = MaterialTheme.colorScheme.onPrimary)
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Más", tint = MaterialTheme.colorScheme.onPrimary)
                         }
-                        IconButton(onClick = { viewModel.saveToGallery() }) {
-                            Icon(Icons.Default.Save, contentDescription = "Guardar", tint = MaterialTheme.colorScheme.onPrimary)
+                        var subMenu by remember { mutableStateOf<String?>(null) }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { 
+                                showMenu = false 
+                                subMenu = null
+                            }
+                        ) {
+                            when (subMenu) {
+                                null -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Eliminar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.deleteQr()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Renombrar") },
+                                        onClick = {
+                                            showMenu = false
+                                            showRenameDialog = true
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("TXT") },
+                                        onClick = { subMenu = "TXT" },
+                                        leadingIcon = { Icon(Icons.Default.Description, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("CSV") },
+                                        onClick = { subMenu = "CSV" },
+                                        leadingIcon = { Icon(Icons.Default.TableChart, contentDescription = null) },
+                                        trailingIcon = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Editar") },
+                                        onClick = {
+                                            showMenu = false
+                                            viewModel.backToEdit()
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.History, contentDescription = null) }
+                                    )
+                                }
+                                "TXT" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToTxt(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                                "CSV" -> {
+                                    DropdownMenuItem(
+                                        text = { Text("Volver") },
+                                        onClick = { subMenu = null },
+                                        leadingIcon = { Icon(Icons.Default.ArrowBack, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Compartir") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = true)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Guardar") },
+                                        onClick = {
+                                            showMenu = false
+                                            subMenu = null
+                                            viewModel.exportToCsv(isShare = false)
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                    )
+                                }
+                            }
                         }
                     } else {
                         IconButton(onClick = onMenuClick) {
@@ -66,12 +163,18 @@ fun CreateUrlScreen(
             Box(modifier = Modifier.weight(1f)) {
                 if (uiState.showResult && uiState.qrBitmap != null) {
                     com.scannerpro.lectorqr.presentation.ui.create.components.StandardResultView(
-                        paddingValues = PaddingValues(0.dp), // Reset padding as it's handled by parent Column
+                        paddingValues = paddingValues,
                         title = uiState.title,
                         qrBitmap = uiState.qrBitmap!!,
                         onSave = { viewModel.saveToGallery() },
                         onShare = { viewModel.shareQr() },
                         onEditName = { showRenameDialog = true },
+                        onFavoriteClick = { viewModel.toggleFavorite() },
+                        isFavorite = uiState.isFavorite,
+                        onExportTxt = { viewModel.exportToTxt() },
+                        onExportCsv = { viewModel.exportToCsv() },
+                        qrBackgroundColor = uiState.backgroundColor,
+                        icon = { Icon(Icons.Default.Link, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(28.dp)) },
                         content = listOf("URL: ${uiState.url}")
                     )
                 } else {
@@ -107,6 +210,22 @@ fun CreateUrlScreen(
                             leadingIcon = {
                                 Icon(Icons.Default.Link, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
+                        )
+
+                        val isPremium = com.scannerpro.lectorqr.presentation.ui.theme.LocalIsPremium.current
+                        
+                        com.scannerpro.lectorqr.presentation.ui.create.components.ColorPickerSection(
+                            title = "Color de primer plano",
+                            selectedColor = uiState.foregroundColor,
+                            isPremium = isPremium,
+                            onColorSelected = { viewModel.onForegroundColorChanged(it) }
+                        )
+                        
+                        com.scannerpro.lectorqr.presentation.ui.create.components.ColorPickerSection(
+                            title = "Color de fondo",
+                            selectedColor = uiState.backgroundColor,
+                            isPremium = isPremium,
+                            onColorSelected = { viewModel.onBackgroundColorChanged(it) }
                         )
 
                         Button(

@@ -20,8 +20,22 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.core.content.ContextCompat
+import com.scannerpro.lectorqr.R
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import android.content.pm.PackageManager
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.core.app.ActivityCompat
+import android.app.Activity
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -409,7 +423,8 @@ fun AppNavigation() {
                 val scanId = backStackEntry.arguments?.getLong("scanId") ?: -1L
                 ScanResultScreen(
                     scanId = scanId,
-                    onBack = { navController.popBackStack() }
+                    onBack = { navController.popBackStack() },
+                    onEdit = { route -> navController.navigate(route) }
                 )
             }
         }
@@ -425,11 +440,47 @@ fun ScannerScreen(
     val uiState by viewModel.uiState.collectAsState()
     val scanResultUiState by viewModel.scanResultUiState.collectAsState()
 
-    var hasCameraPermission by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var hasCameraPermission by remember { 
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    
+    var showRationaleDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         hasCameraPermission = isGranted
+        if (!isGranted) {
+            val activity = context as? Activity
+            if (activity != null && ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.CAMERA)) {
+                showRationaleDialog = true
+            } else {
+                showSettingsDialog = true
+            }
+        }
+    }
+
+    // Re-check permission when resuming from Settings
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val isGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                if (isGranted && !hasCameraPermission) {
+                    hasCameraPermission = true
+                    showSettingsDialog = false
+                    showRationaleDialog = false
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     val galleryLauncher = rememberLauncherForActivityResult(
@@ -440,7 +491,9 @@ fun ScannerScreen(
     }
 
     LaunchedEffect(Unit) {
-        permissionLauncher.launch(Manifest.permission.CAMERA)
+        if (!hasCameraPermission) {
+            permissionLauncher.launch(Manifest.permission.CAMERA)
+        }
     }
 
     LaunchedEffect(uiState.isGalleryRequested) {
@@ -481,11 +534,14 @@ fun ScannerScreen(
                     onOpenRename = { viewModel.openRenameDialog() },
                     onCloseRename = { viewModel.closeRenameDialog() },
                     onSaveName = { viewModel.saveName() },
-                    onRenameInputChange = { viewModel.updateRenameInput(it) },
+                    onUpdateRenameInput = { viewModel.updateRenameInput(it) },
                     onDelete = { viewModel.deleteScan() },
-                    onExportTxt = { viewModel.exportAsTxt() },
-                    onExportCsv = { viewModel.exportAsCsv() },
-                    onGetSearchUrl = { viewModel.getSearchUrl(it) }
+                    onExportTxt = { share -> viewModel.exportAsTxt(share) },
+                    onExportCsv = { share -> viewModel.exportAsCsv(share) },
+                    onGetSearchUrl = { viewModel.getSearchUrl(it) },
+                    onShare = { /* shared in ScanResultContent */ },
+                    onEdit = { /* No-op for live scans */ },
+                    onSaveQr = { viewModel.saveQrToGallery() }
                 )
             }
         } else {
@@ -526,7 +582,7 @@ fun ScannerScreen(
                             IconButton(onClick = { viewModel.onZoomChanged((uiState.zoomRatio - 0.5f).coerceAtLeast(uiState.minZoomRatio)) }) {
                                 Icon(
                                     Icons.Default.ZoomOut, 
-                                    contentDescription = "Zoom Out", 
+                                    contentDescription = stringResource(R.string.zoom_out), 
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -544,7 +600,7 @@ fun ScannerScreen(
                             IconButton(onClick = { viewModel.onZoomChanged((uiState.zoomRatio + 0.5f).coerceAtMost(uiState.maxZoomRatio)) }) {
                                 Icon(
                                     Icons.Default.ZoomIn, 
-                                    contentDescription = "Zoom In", 
+                                    contentDescription = stringResource(R.string.zoom_in), 
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -563,6 +619,57 @@ fun ScannerScreen(
                 com.scannerpro.lectorqr.presentation.ui.components.BannerAdView(
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
+
+                // --- Permission Dialogs ---
+                if (showRationaleDialog) {
+                    AlertDialog(
+                        onDismissRequest = { /* Essential permission, no dismiss */ },
+                        title = { Text(stringResource(R.string.permission_camera_title)) },
+                        text = { Text(stringResource(R.string.permission_camera_rationale)) },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    showRationaleDialog = false
+                                    permissionLauncher.launch(Manifest.permission.CAMERA)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Text(stringResource(R.string.permission_grant))
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { (context as? Activity)?.finish() }) {
+                                Text("Salir", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    )
+                }
+
+                if (showSettingsDialog) {
+                    AlertDialog(
+                        onDismissRequest = { /* Essential permission, no dismiss */ },
+                        title = { Text(stringResource(R.string.permission_camera_required)) },
+                        text = { Text(stringResource(R.string.permission_settings_msg)) },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                        data = Uri.fromParts("package", context.packageName, null)
+                                    }
+                                    context.startActivity(intent)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Text(stringResource(R.string.permission_go_to_settings))
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { (context as? Activity)?.finish() }) {
+                                Text("Salir", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    )
+                }
             }
         }
     }

@@ -9,5 +9,13 @@ object AdConfig {
     const val TEST_INTERSTITIAL_ID = "ca-app-pub-3940256099942544/1033173712"
 
     const val PREMIUM_PRODUCT_ID = "remove_ads_premium"
-    const val PREMIUM_PRICE = "9.90 USD"
+    const val PREMIUM_WEEKLY_ID = "premium_weekly"
+    const val PREMIUM_MONTHLY_ID = "premium_monthly"
+    const val PREMIUM_YEARLY_ID = "premium_yearly"
+    const val PREMIUM_LIFETIME_ID = "premium_lifetime"
+
+    const val PRICE_WEEKLY = "0.49 USD"
+    const val PRICE_MONTHLY = "1.99 USD"
+    const val PRICE_YEARLY = "4.99 USD"
+    const val PRICE_LIFETIME = "9.99 USD"
 }

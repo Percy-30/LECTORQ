@@ -21,6 +21,9 @@ interface ISettingsRepository {
     val searchEngine: Flow<String>
     val isPremium: StateFlow<Boolean>
     val isManualPremium: StateFlow<Boolean>
+    val selectedLanguage: Flow<String>
+    val isBiometricEnabled: Flow<Boolean>
+    val currentAppIcon: Flow<String>
 
     suspend fun setThemeMode(mode: Int)
     suspend fun setPrimaryColor(color: Long)
@@ -39,4 +42,7 @@ interface ISettingsRepository {
     suspend fun setSearchEngine(engine: String)
     suspend fun setPremium(enabled: Boolean)
     suspend fun setManualPremium(enabled: Boolean)
+    suspend fun setSelectedLanguage(languageCode: String)
+    suspend fun setBiometricEnabled(enabled: Boolean)
+    suspend fun setCurrentAppIcon(iconName: String)
 }

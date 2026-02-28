@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -24,7 +25,7 @@ import com.scannerpro.lectorqr.R
 
 data class QrType(
     val id: String,
-    val title: String,
+    val titleRes: Int,
     val icon: Any,
     val isSpecial: Boolean = false
 )
@@ -39,55 +40,55 @@ fun QrTypeSelectionScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val qrTypes = listOf(
-        QrType("my_qr", "Mi código QR", Icons.Default.Person, isSpecial = true),
-        QrType("url", "URL", Icons.Default.Link),
-        QrType("text", "Texto", Icons.Default.TextFields),
-        QrType("contact", "Contacto", Icons.Default.Person),
-        QrType("email", "Dirección de correo electrónico", Icons.Default.Email),
-        QrType("sms", "Dirección SMS", Icons.Default.Message),
-        QrType("wifi", "Wi-Fi", Icons.Default.Wifi),
-        QrType("phone", "Número de teléfono", Icons.Default.Phone),
-        QrType("location", "Coordenadas geográficas", Icons.Default.LocationOn),
-        QrType("calendar", "Calendario", Icons.Default.Event)
+        QrType("my_qr", R.string.drawer_my_qr, Icons.Default.Person, isSpecial = true),
+        QrType("url", R.string.type_url, Icons.Default.Link),
+        QrType("text", R.string.type_text, Icons.Default.TextFields),
+        QrType("contact", R.string.type_contact, Icons.Default.Person),
+        QrType("email", R.string.label_email_address, Icons.Default.Email),
+        QrType("sms", R.string.type_sms, Icons.Default.Message),
+        QrType("wifi", R.string.type_wifi, Icons.Default.Wifi),
+        QrType("phone", R.string.label_phone_number, Icons.Default.Phone),
+        QrType("location", R.string.field_coordinates, Icons.Default.LocationOn),
+        QrType("calendar", R.string.type_calendar, Icons.Default.Event)
     )
 
     val socialTypes = listOf(
-        QrType("whatsapp", "WhatsApp", R.drawable.ic_whatsapp),
-        QrType("instagram", "Instagram", R.drawable.ic_instagram),
-        QrType("facebook", "Facebook", R.drawable.ic_facebook),
-        QrType("youtube", "YouTube", R.drawable.ic_youtube),
-        QrType("twitter", "Twitter (X)", R.drawable.ic_twitter_x),
-        QrType("linkedin", "LinkedIn", R.drawable.ic_linkedin),
-        QrType("tiktok", "TikTok", R.drawable.ic_tiktok)
+        QrType("whatsapp", R.string.type_whatsapp, R.drawable.ic_whatsapp),
+        QrType("instagram", R.string.type_instagram, R.drawable.ic_instagram),
+        QrType("facebook", R.string.type_facebook, R.drawable.ic_facebook),
+        QrType("youtube", R.string.type_youtube, R.drawable.ic_youtube),
+        QrType("twitter", R.string.type_twitter, R.drawable.ic_twitter_x),
+        QrType("linkedin", R.string.type_linkedin, R.drawable.ic_linkedin),
+        QrType("tiktok", R.string.type_tiktok, R.drawable.ic_tiktok)
     )
 
     val barcodeTypes = listOf(
-        QrType("ean8", "EAN_8", Icons.Default.ViewWeek),
-        QrType("ean13", "EAN_13", Icons.Default.ViewWeek),
-        QrType("upce", "UPC_E", Icons.Default.ViewWeek),
-        QrType("upca", "UPC_A", Icons.Default.ViewWeek),
-        QrType("code39", "CODE_39", Icons.Default.ViewWeek),
-        QrType("code93", "CODE_93", Icons.Default.ViewWeek),
-        QrType("code128", "CODE_128", Icons.Default.ViewWeek),
-        QrType("itf", "ITF", Icons.Default.ViewWeek),
-        QrType("pdf417", "PDF_417", Icons.Default.ViewWeek),
-        QrType("codabar", "CODABAR", Icons.Default.ViewWeek),
-        QrType("datamatrix", "DATA_MATRIX", Icons.Default.ViewWeek),
-        QrType("aztec", "AZTEC", Icons.Default.ViewWeek)
+        QrType("ean8", R.string.type_ean8, Icons.Default.ViewWeek),
+        QrType("ean13", R.string.type_ean13, Icons.Default.ViewWeek),
+        QrType("upce", R.string.type_upce, Icons.Default.ViewWeek),
+        QrType("upca", R.string.type_upca, Icons.Default.ViewWeek),
+        QrType("code39", R.string.type_code39, Icons.Default.ViewWeek),
+        QrType("code93", R.string.type_code93, Icons.Default.ViewWeek),
+        QrType("code128", R.string.type_code128, Icons.Default.ViewWeek),
+        QrType("itf", R.string.type_itf, Icons.Default.ViewWeek),
+        QrType("pdf417", R.string.type_pdf417, Icons.Default.ViewWeek),
+        QrType("codabar", R.string.type_codabar, Icons.Default.ViewWeek),
+        QrType("datamatrix", R.string.type_datamatrix, Icons.Default.ViewWeek),
+        QrType("aztec", R.string.type_aztec, Icons.Default.ViewWeek)
     )
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Crear código QR", color = MaterialTheme.colorScheme.onPrimary) },
+                title = { Text(stringResource(R.string.qr_type_selection_title), color = MaterialTheme.colorScheme.onPrimary) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Volver", tint = MaterialTheme.colorScheme.onPrimary)
+                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.nav_back), tint = MaterialTheme.colorScheme.onPrimary)
                     }
                 },
                 actions = {
                     IconButton(onClick = onMenuClick) {
-                        Icon(Icons.Default.Menu, contentDescription = "Menú", tint = MaterialTheme.colorScheme.onPrimary)
+                        Icon(Icons.Default.Menu, contentDescription = stringResource(R.string.nav_menu), tint = MaterialTheme.colorScheme.onPrimary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.primary)
@@ -109,7 +110,7 @@ fun QrTypeSelectionScreen(
                 // Header General Types
                 item {
                     Text(
-                        "Tipo de código QR",
+                        stringResource(R.string.qr_type_general_header),
                         modifier = Modifier.padding(16.dp),
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold,
@@ -128,7 +129,7 @@ fun QrTypeSelectionScreen(
                 // Header Social
                 item {
                     Text(
-                        "Social",
+                        stringResource(R.string.qr_type_social_header),
                         modifier = Modifier.padding(16.dp),
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold,
@@ -147,7 +148,7 @@ fun QrTypeSelectionScreen(
                 // Header Barcode
                 item {
                     Text(
-                        "Código de barras",
+                        stringResource(R.string.qr_type_barcode_header),
                         modifier = Modifier.padding(16.dp),
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold,
@@ -164,7 +165,6 @@ fun QrTypeSelectionScreen(
                 }
             }
 
-            // Banner Ad at the bottom
             com.scannerpro.lectorqr.presentation.ui.components.BannerAdView(
                 modifier = Modifier.fillMaxWidth()
             )
@@ -201,13 +201,10 @@ fun QrTypeItem(
         }
         Spacer(modifier = Modifier.width(16.dp))
         Text(
-            text = qrType.title,
+            text = stringResource(qrType.titleRes),
             color = if (qrType.isSpecial) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
             fontSize = 16.sp,
             fontWeight = if (qrType.isSpecial) FontWeight.Bold else FontWeight.Normal
         )
-    }
-    if (!qrType.isSpecial) {
-        Divider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
     }
 }

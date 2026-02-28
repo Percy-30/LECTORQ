@@ -71,6 +71,15 @@ class SettingsRepositoryImpl @Inject constructor(
     private val _searchEngine = MutableStateFlow(prefs.getString("search_engine", "Google") ?: "Google")
     override val searchEngine: Flow<String> = _searchEngine.asStateFlow()
 
+    private val _selectedLanguage = MutableStateFlow(prefs.getString("selected_language", "system") ?: "system")
+    override val selectedLanguage: Flow<String> = _selectedLanguage.asStateFlow()
+
+    private val _isBiometricEnabled = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
+    override val isBiometricEnabled: Flow<Boolean> = _isBiometricEnabled.asStateFlow()
+
+    private val _currentAppIcon = MutableStateFlow(prefs.getString("current_app_icon", "DEFAULT") ?: "DEFAULT")
+    override val currentAppIcon: Flow<String> = _currentAppIcon.asStateFlow()
+
     private val _isRealPremium = MutableStateFlow(premiumPrefs.getBoolean("is_premium", false))
     
     private val _isManualPremium = MutableStateFlow(premiumPrefs.getBoolean("is_manual_premium", false))
@@ -164,5 +173,20 @@ class SettingsRepositoryImpl @Inject constructor(
     override suspend fun setManualPremium(enabled: Boolean) {
         premiumPrefs.edit().putBoolean("is_manual_premium", enabled).commit()
         _isManualPremium.value = enabled
+    }
+
+    override suspend fun setSelectedLanguage(languageCode: String) {
+        prefs.edit().putString("selected_language", languageCode).apply()
+        _selectedLanguage.value = languageCode
+    }
+
+    override suspend fun setBiometricEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("biometric_enabled", enabled).apply()
+        _isBiometricEnabled.value = enabled
+    }
+
+    override suspend fun setCurrentAppIcon(iconName: String) {
+        prefs.edit().putString("current_app_icon", iconName).apply()
+        _currentAppIcon.value = iconName
     }
 }

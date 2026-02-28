@@ -17,14 +17,20 @@ data class CreateUrlUiState(
     val title: String = "URL",
     val qrBitmap: Bitmap? = null,
     val isLoading: Boolean = false,
-    val showResult: Boolean = false
+    val showResult: Boolean = false,
+    val foregroundColor: Int = android.graphics.Color.BLACK,
+    val backgroundColor: Int = android.graphics.Color.WHITE,
+    val scanId: Long = -1L,
+    val isFavorite: Boolean = false
 )
 
 @HiltViewModel
 class CreateUrlViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
     private val generateQrUseCase: GenerateQrUseCase,
-    private val historyRepository: com.scannerpro.lectorqr.domain.repository.IHistoryRepository
+    private val historyRepository: com.scannerpro.lectorqr.domain.repository.IHistoryRepository,
+    private val settingsRepository: com.scannerpro.lectorqr.domain.repository.ISettingsRepository,
+    private val fileHelper: com.scannerpro.lectorqr.util.FileHelper
 ) : ViewModel() {
 
     private val prefs = context.getSharedPreferences("qr_url", android.content.Context.MODE_PRIVATE)
@@ -37,25 +43,49 @@ class CreateUrlViewModel @Inject constructor(
     }
 
     private fun loadUrl() {
-        _uiState.update { it.copy(
-            url = prefs.getString("url", "") ?: "",
-            title = prefs.getString("title", "URL") ?: "URL"
-        ) }
+        val draftUrl = prefs.getString("url", "") ?: ""
+        if (draftUrl.isNotEmpty()) {
+            _uiState.update { it.copy(
+                url = draftUrl,
+                title = prefs.getString("title", "URL") ?: "URL",
+                foregroundColor = prefs.getInt("foregroundColor", android.graphics.Color.BLACK),
+                backgroundColor = prefs.getInt("backgroundColor", android.graphics.Color.WHITE)
+            ) }
+            prefs.edit().clear().apply()
+        }
     }
 
     private fun saveUrl() {
         prefs.edit().apply {
             putString("url", _uiState.value.url)
             putString("title", _uiState.value.title)
+            putInt("foregroundColor", _uiState.value.foregroundColor)
+            putInt("backgroundColor", _uiState.value.backgroundColor)
             apply()
         }
     }
 
     fun onUrlChanged(url: String) = _uiState.update { it.copy(url = url) }
 
+    fun onForegroundColorChanged(color: Int) {
+        _uiState.update { it.copy(foregroundColor = color) }
+        saveUrl()
+    }
+
+    fun onBackgroundColorChanged(color: Int) {
+        _uiState.update { it.copy(backgroundColor = color) }
+        saveUrl()
+    }
+
+    fun toggleFavorite() {
+        _uiState.update { it.copy(isFavorite = !it.isFavorite) }
+        syncWithHistory()
+    }
+
     fun updateTitle(newTitle: String) {
         _uiState.update { it.copy(title = newTitle) }
         saveUrl()
+        syncWithHistory()
     }
 
     fun generateQr() {
@@ -66,8 +96,45 @@ class CreateUrlViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true) }
             saveUrl()
 
-            val bitmap = generateQrUseCase(url)
+            val logoBitmap = if (settingsRepository.isPremium.value) {
+                com.scannerpro.lectorqr.util.BitmapUtils.getDrawableAsBitmap(context, com.scannerpro.lectorqr.R.drawable.ic_link, 100, _uiState.value.foregroundColor)
+            } else null
+
+            val bitmap = generateQrUseCase(
+                text = url,
+                foregroundColor = _uiState.value.foregroundColor,
+                backgroundColor = _uiState.value.backgroundColor,
+                logo = logoBitmap
+            )
             _uiState.update { it.copy(qrBitmap = bitmap, isLoading = false, showResult = true) }
+            syncWithHistory()
+        }
+    }
+
+    private fun syncWithHistory() {
+        viewModelScope.launch {
+            val state = _uiState.value
+            if (state.url.isBlank()) return@launch
+            
+            val imagePath = if (state.qrBitmap != null) {
+                fileHelper.saveBitmapToInternalStorage(context, state.qrBitmap!!, "URL_${System.currentTimeMillis()}")
+            } else null
+
+            val barcodeResult = com.scannerpro.lectorqr.domain.model.BarcodeResult(
+                id = if (state.scanId != -1L) state.scanId else 0L,
+                displayValue = state.url,
+                rawValue = state.url,
+                format = 256, // QR_CODE
+                type = com.google.mlkit.vision.barcode.common.Barcode.TYPE_URL,
+                timestamp = System.currentTimeMillis(),
+                isFavorite = state.isFavorite,
+                imagePath = imagePath,
+                customName = state.title,
+                foregroundColor = state.foregroundColor,
+                backgroundColor = state.backgroundColor
+            )
+            val newId = historyRepository.insertScan(barcodeResult)
+            _uiState.update { it.copy(scanId = newId) }
         }
     }
 
@@ -76,8 +143,33 @@ class CreateUrlViewModel @Inject constructor(
     }
 
     fun deleteQr() {
-        _uiState.update { it.copy(showResult = false, url = "", qrBitmap = null) }
+        _uiState.update { it.copy(showResult = false, url = "", qrBitmap = null, scanId = -1L) }
         prefs.edit().clear().apply()
+    }
+
+    fun exportToTxt(isShare: Boolean = true) {
+        val url = _uiState.value.url
+        if (url.isBlank()) return
+        val content = "URL: $url"
+        val filename = "${_uiState.value.title}.txt"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/plain", content)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/plain", content)
+        }
+    }
+
+    fun exportToCsv(isShare: Boolean = true) {
+        val url = _uiState.value.url
+        if (url.isBlank()) return
+        val header = "Tipo,Contenido\n"
+        val row = "URL,\"${url.replace("\"", "\"\"")}\""
+        val filename = "${_uiState.value.title}.csv"
+        if (isShare) {
+            com.scannerpro.lectorqr.util.FileUtils.shareFile(context, filename, "text/csv", header + row)
+        } else {
+            com.scannerpro.lectorqr.util.FileUtils.saveFileToDownloads(context, filename, "text/csv", header + row)
+        }
     }
 
     fun shareQr() {
