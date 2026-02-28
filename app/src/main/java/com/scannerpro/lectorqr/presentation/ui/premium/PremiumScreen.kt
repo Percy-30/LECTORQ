@@ -128,6 +128,9 @@ fun PremiumScreen(
                     BenefitItem(stringResource(R.string.benefit_no_ads))
                     BenefitItem(stringResource(R.string.benefit_unlimited_history))
                     BenefitItem(stringResource(R.string.benefit_create_all))
+                    BenefitItem(stringResource(R.string.benefit_biometrics))
+                    BenefitItem(stringResource(R.string.benefit_custom_qr))
+                    BenefitItem(stringResource(R.string.benefit_app_icons))
                     BenefitItem(stringResource(R.string.benefit_speed))
                 }
 
