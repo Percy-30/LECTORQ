@@ -1,6 +1,6 @@
 [versions]
-agp = "8.11.1" 
-kotlin = "2.0.0"
+agp = "8.8.0" 
+kotlin = "2.0.21"
 coreKtx = "1.16.0"
 junit = "4.13.2"
 junitVersion = "1.2.1"
@@ -10,16 +10,21 @@ activityCompose = "1.10.1"
 composeBom = "2024.09.00"
 hilt = "2.51.1"
 camerax = "1.4.0"
-mlkit = "17.2.0"
+mlkit = "17.3.0"
 room = "2.6.1"
 kotlinxCoroutines = "1.8.1"
 browser = "1.8.0"
 billing = "7.0.0"
+appcompat = "1.7.0"
+biometric = "1.2.0-alpha05"
 
 [libraries]
 guava = { group = "com.google.guava", name = "guava", version = "31.0.1-android" }
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "kotlinxCoroutines" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
@@ -40,6 +45,7 @@ androidx-navigation-compose = { group = "androidx.navigation", name = "navigatio
 androidx-browser = { group = "androidx.browser", name = "browser", version.ref = "browser" }
 ads-mobile = { group = "com.google.android.gms", name = "play-services-ads", version = "23.6.0" }
 androidx-billing = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "billing" }
+androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
 
 # Hilt
 hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
