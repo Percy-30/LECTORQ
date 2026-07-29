@@ -99,7 +99,8 @@ fun ScanResultContent(
     onGetSearchUrl: (String) -> String,
     onShare: () -> Unit,
     onEdit: () -> Unit,
-    onSaveQr: () -> Unit
+    onSaveQr: () -> Unit,
+    onSelectOtherBarcode: (com.google.mlkit.vision.barcode.common.Barcode) -> Unit = {}
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -234,14 +235,7 @@ fun ScanResultContent(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.primary)
             )
         },
-        containerColor = MaterialTheme.colorScheme.background,
-        bottomBar = {
-            BannerAdView(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp)
-            )
-        }
+        containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
         val scrollState = rememberScrollState()
         val icon = BarcodeTypeUtils.getIconForType(displayResult.type)
@@ -414,17 +408,16 @@ fun ScanResultContent(
                             contentScale = androidx.compose.ui.layout.ContentScale.Fit
                         )
                     } else if (displayResult.imagePath != null) {
-                        val bitmap = try {
-                            android.graphics.BitmapFactory.decodeFile(displayResult.imagePath)
-                        } catch(e: Exception) {
-                            android.util.Log.e("ScanResultScreen", "Error loading bitmap from path: ${displayResult.imagePath}", e)
-                            null
+                        var thumbnailBitmap by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<android.graphics.Bitmap?>(null) }
+                        
+                        androidx.compose.runtime.LaunchedEffect(displayResult.imagePath) {
+                            thumbnailBitmap = com.scannerpro.lectorqr.util.BitmapUtils.decodeSampledBitmapFromFile(displayResult.imagePath)
                         }
                         
-                        if (bitmap != null) {
+                        if (thumbnailBitmap != null) {
                             bitmapLoaded = true
                             androidx.compose.foundation.Image(
-                                bitmap = bitmap.asImageBitmap(),
+                                bitmap = thumbnailBitmap!!.asImageBitmap(),
                                 contentDescription = null,
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = androidx.compose.ui.layout.ContentScale.Fit
@@ -466,6 +459,42 @@ fun ScanResultContent(
                         }
                     }
                 }
+            }
+
+            BannerAdView(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 16.dp)
+            )
+
+            if (uiState.otherBarcodes.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Divider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
+                Text(
+                    text = "Otros códigos en este escaneo",
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(16.dp),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 18.sp
+                )
+                
+                uiState.otherBarcodes.forEach { barcode ->
+                    val typeName = stringResource(BarcodeTypeUtils.getTypeNameRes(barcode.valueType))
+                    ListItem(
+                        headlineContent = { Text(barcode.displayValue ?: typeName, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                        supportingContent = { Text(typeName) },
+                        leadingContent = {
+                            Icon(
+                                imageVector = BarcodeTypeUtils.getIconForType(barcode.valueType),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        modifier = Modifier.clickable { onSelectOtherBarcode(barcode) }
+                    )
+                    Divider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
+                }
+                Spacer(modifier = Modifier.height(32.dp))
             }
         }
     }
@@ -509,6 +538,7 @@ fun FormattedDetailContent(items: List<Pair<Int, String>>) {
 fun DynamicActionsRow(result: BarcodeResult, onGetSearchUrl: (String) -> String, onSaveQr: () -> Unit) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+    var suspiciousUrlToOpen by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
     val type = result.type
     val rawValue = result.rawValue ?: ""
     val items = BarcodeTypeUtils.getFormattedValueWithLabels(type, rawValue)
@@ -518,6 +548,33 @@ fun DynamicActionsRow(result: BarcodeResult, onGetSearchUrl: (String) -> String,
     val tel = if (type == Barcode.TYPE_CONTACT_INFO) rawValue.substringAfter("TEL:", "").substringBefore("\n").trim() else rawValue
     val email = if (type == Barcode.TYPE_CONTACT_INFO) rawValue.substringAfter("EMAIL:", "").substringBefore("\n").trim() else rawValue
     val geo = if (type == Barcode.TYPE_GEO) rawValue.substringAfter("geo:", "").substringBefore("?").ifEmpty { rawValue } else ""
+
+    if (suspiciousUrlToOpen != null) {
+        AlertDialog(
+            onDismissRequest = { suspiciousUrlToOpen = null },
+            title = { Text("Advertencia de Seguridad", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) },
+            text = { Text("Este enlace presenta características sospechosas y podría ser malicioso o intentar engañarte (phishing).\n\n¿Estás seguro de que deseas abrirlo bajo tu propio riesgo?\n\nURL: $suspiciousUrlToOpen", color = MaterialTheme.colorScheme.onSurface) },
+            confirmButton = {
+                TextButton(onClick = {
+                    var finalUrl = suspiciousUrlToOpen!!
+                    if (!finalUrl.startsWith("http://", ignoreCase = true) && !finalUrl.startsWith("https://", ignoreCase = true)) {
+                        finalUrl = "http://$finalUrl"
+                    }
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(finalUrl))
+                    com.scannerpro.lectorqr.util.IntentUtils.startActivitySafe(context, intent)
+                    suspiciousUrlToOpen = null
+                }) {
+                    Text("Continuar de todos modos", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { suspiciousUrlToOpen = null }) {
+                    Text(stringResource(R.string.action_cancel), color = MaterialTheme.colorScheme.primary)
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    }
 
     FlowRow(
         modifier = Modifier
@@ -536,25 +593,25 @@ fun DynamicActionsRow(result: BarcodeResult, onGetSearchUrl: (String) -> String,
                         putExtra(android.provider.ContactsContract.Intents.Insert.PHONE, tel)
                         putExtra(android.provider.ContactsContract.Intents.Insert.EMAIL, email)
                     }
-                    context.startActivity(intent)
+                    com.scannerpro.lectorqr.util.IntentUtils.startActivitySafe(context, intent)
                 }
                 if (tel.isNotEmpty()) {
                     ResultActionItem(Icons.Default.Call, stringResource(R.string.btn_dial_number)) {
                         val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$tel"))
-                        context.startActivity(intent)
+                        com.scannerpro.lectorqr.util.IntentUtils.startActivitySafe(context, intent)
                     }
                 }
             }
             Barcode.TYPE_GEO -> {
                 ResultActionItem(Icons.Default.Map, stringResource(R.string.btn_show_map)) {
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse("geo:$geo?q=$geo"))
-                    context.startActivity(intent)
+                    com.scannerpro.lectorqr.util.IntentUtils.startActivitySafe(context, intent)
                 }
             }
             Barcode.TYPE_PHONE -> {
                 ResultActionItem(Icons.Default.Call, stringResource(R.string.btn_call)) {
                     val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$rawValue"))
-                    context.startActivity(intent)
+                    com.scannerpro.lectorqr.util.IntentUtils.startActivitySafe(context, intent)
                 }
             }
             Barcode.TYPE_EMAIL -> {
@@ -563,7 +620,7 @@ fun DynamicActionsRow(result: BarcodeResult, onGetSearchUrl: (String) -> String,
                         rawValue.substringAfter("mailto:", "").substringBefore("?")
                     }
                     val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$to"))
-                    context.startActivity(intent)
+                    com.scannerpro.lectorqr.util.IntentUtils.startActivitySafe(context, intent)
                 }
             }
             Barcode.TYPE_SMS -> {
@@ -573,14 +630,22 @@ fun DynamicActionsRow(result: BarcodeResult, onGetSearchUrl: (String) -> String,
                 if (phone.isNotEmpty()) {
                     ResultActionItem(Icons.Default.Sms, stringResource(R.string.btn_send_sms)) {
                         val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$phone"))
-                        context.startActivity(intent)
+                        com.scannerpro.lectorqr.util.IntentUtils.startActivitySafe(context, intent)
                     }
                 }
             }
             Barcode.TYPE_URL -> {
                 ResultActionItem(Icons.Default.Language, stringResource(R.string.btn_open_url)) {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(rawValue))
-                    context.startActivity(intent)
+                    if (com.scannerpro.lectorqr.util.UrlSecurityUtils.isSuspiciousUrl(rawValue)) {
+                        suspiciousUrlToOpen = rawValue
+                    } else {
+                        var finalUrl = rawValue
+                        if (!finalUrl.startsWith("http://", ignoreCase = true) && !finalUrl.startsWith("https://", ignoreCase = true)) {
+                            finalUrl = "http://$finalUrl"
+                        }
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(finalUrl))
+                        com.scannerpro.lectorqr.util.IntentUtils.startActivitySafe(context, intent)
+                    }
                 }
             }
             Barcode.TYPE_WIFI -> {
@@ -596,7 +661,7 @@ fun DynamicActionsRow(result: BarcodeResult, onGetSearchUrl: (String) -> String,
         ResultActionItem(Icons.Default.Search, stringResource(R.string.btn_web_search)) {
             val searchUrl = onGetSearchUrl(rawValue)
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(searchUrl))
-            context.startActivity(intent)
+            com.scannerpro.lectorqr.util.IntentUtils.startActivitySafe(context, intent)
         }
         
         ResultActionItem(Icons.Default.Save, stringResource(R.string.action_save)) {
@@ -608,7 +673,7 @@ fun DynamicActionsRow(result: BarcodeResult, onGetSearchUrl: (String) -> String,
                 this.type = "text/plain"
                 putExtra(Intent.EXTRA_TEXT, formattedText)
             }
-            context.startActivity(Intent.createChooser(intent, context.getString(R.string.action_share)))
+            com.scannerpro.lectorqr.util.IntentUtils.startActivitySafe(context, Intent.createChooser(intent, context.getString(R.string.action_share)))
         }
 
         ResultActionItem(Icons.Default.ContentCopy, stringResource(R.string.action_copy)) {

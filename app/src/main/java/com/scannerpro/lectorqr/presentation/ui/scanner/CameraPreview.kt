@@ -29,7 +29,7 @@ fun CameraPreview(
     isTapToFocusEnabled: Boolean = true,
     cameraSelection: Int = 0,
     onZoomRangeChanged: (Float, Float) -> Unit = { _, _ -> },
-    onBarcodeDetected: (com.google.mlkit.vision.barcode.common.Barcode, android.graphics.Bitmap?) -> Unit
+    onBarcodesDetected: (List<com.google.mlkit.vision.barcode.common.Barcode>, android.graphics.Bitmap?, Int, Int) -> Unit
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -62,12 +62,22 @@ fun CameraPreview(
             it.setSurfaceProvider(previewView.surfaceProvider)
         }
 
+        val resolutionSelector = androidx.camera.core.resolutionselector.ResolutionSelector.Builder()
+            .setResolutionStrategy(
+                androidx.camera.core.resolutionselector.ResolutionStrategy(
+                    android.util.Size(1920, 1080),
+                    androidx.camera.core.resolutionselector.ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                )
+            )
+            .build()
+
         val imageAnalysis = ImageAnalysis.Builder()
+            .setResolutionSelector(resolutionSelector)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
             .also {
-                it.setAnalyzer(cameraExecutor, BarcodeAnalyzer(scanner) { barcode, bitmap ->
-                    onBarcodeDetected(barcode, bitmap)
+                it.setAnalyzer(cameraExecutor, BarcodeAnalyzer(scanner) { barcodes, bitmap, width, height ->
+                    onBarcodesDetected(barcodes, bitmap, width, height)
                 })
             }
 

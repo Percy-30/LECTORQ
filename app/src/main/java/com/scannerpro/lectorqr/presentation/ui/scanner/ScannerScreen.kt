@@ -16,10 +16,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.*
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
@@ -144,6 +151,7 @@ fun AppNavigation() {
                     onTypeSelected = { typeId ->
                         when (typeId) {
                             "my_qr" -> navController.navigate(Screen.CreateQr.route)
+                            "dynamic_qr" -> navController.navigate(Screen.CreateDynamicQr.route)
                             "url" -> navController.navigate(Screen.CreateUrl.route)
                             "text" -> navController.navigate(Screen.CreateText.route)
                             "contact" -> navController.navigate(Screen.CreateContact.route)
@@ -180,6 +188,12 @@ fun AppNavigation() {
             }
             composable(Screen.CreateUrl.route) {
                 CreateUrlScreen(
+                    onBack = { navController.popBackStack() },
+                    onMenuClick = { scope.launch { drawerState.open() } }
+                )
+            }
+            composable(Screen.CreateDynamicQr.route) {
+                com.scannerpro.lectorqr.presentation.ui.create.dynamic.CreateDynamicQrScreen(
                     onBack = { navController.popBackStack() },
                     onMenuClick = { scope.launch { drawerState.open() } }
                 )
@@ -541,29 +555,102 @@ fun ScannerScreen(
                     onGetSearchUrl = { viewModel.getSearchUrl(it) },
                     onShare = { /* shared in ScanResultContent */ },
                     onEdit = { /* No-op for live scans */ },
-                    onSaveQr = { viewModel.saveQrToGallery() }
+                    onSaveQr = { viewModel.saveQrToGallery() },
+                    onSelectOtherBarcode = { viewModel.selectOtherBarcode(it) }
                 )
             }
         } else {
             Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
                 if (hasCameraPermission) {
-                    CameraPreview(
-                        modifier = Modifier.fillMaxSize(),
-                        isFlashEnabled = uiState.isFlashEnabled,
-                        isFrontCamera = uiState.isFrontCamera,
-                        zoomRatio = uiState.zoomRatio,
-                        isAutofocusEnabled = uiState.isAutofocusEnabled,
-                        isTapToFocusEnabled = uiState.isTapToFocusEnabled,
-                        cameraSelection = uiState.cameraSelection,
-                        onZoomRangeChanged = { min, max ->
-                            viewModel.onZoomRangeChanged(min, max)
-                        },
-                        onBarcodeDetected = { barcode, bitmap ->
-                            viewModel.handleBarcode(barcode, bitmap)
-                        }
-                    )
+                    androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                        val previewWidth = constraints.maxWidth.toFloat()
+                        val previewHeight = constraints.maxHeight.toFloat()
 
-                    ScannerViewfinder()
+                        CameraPreview(
+                            modifier = Modifier.fillMaxSize(),
+                            isFlashEnabled = uiState.isFlashEnabled,
+                            isFrontCamera = uiState.isFrontCamera,
+                            zoomRatio = uiState.zoomRatio,
+                            isAutofocusEnabled = uiState.isAutofocusEnabled,
+                            isTapToFocusEnabled = uiState.isTapToFocusEnabled,
+                            cameraSelection = uiState.cameraSelection,
+                            onZoomRangeChanged = { min, max ->
+                                viewModel.onZoomRangeChanged(min, max)
+                            },
+                            onBarcodesDetected = { barcodes, bitmap, width, height ->
+                                viewModel.handleBarcodes(barcodes, bitmap, width, height, previewWidth, previewHeight)
+                            }
+                        )
+
+                        ScannerViewfinder()
+
+                        // AR Overlay
+                        val multipleBarcodes = uiState.multipleBarcodesDetected
+                        if (multipleBarcodes != null && uiState.sourceImageWidth > 0 && uiState.sourceImageHeight > 0) {
+                            val imgWidth = uiState.sourceImageWidth.toFloat()
+                            val imgHeight = uiState.sourceImageHeight.toFloat()
+                            
+                            val scale = maxOf(previewWidth / imgWidth, previewHeight / imgHeight)
+                            val offsetX = (previewWidth - imgWidth * scale) / 2
+                            val offsetY = (previewHeight - imgHeight * scale) / 2
+                            
+                            val touchPadding = with(androidx.compose.ui.platform.LocalDensity.current) { 48.dp.toPx() }
+
+                            androidx.compose.foundation.Canvas(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .pointerInput(multipleBarcodes, scale, offsetX, offsetY, uiState.isFrontCamera) {
+                                        detectTapGestures { tapOffset ->
+                                            for (barcode in multipleBarcodes) {
+                                                barcode.boundingBox?.let { rect ->
+                                                    val left = if (uiState.isFrontCamera) previewWidth - ((rect.right * scale) + offsetX) else (rect.left * scale) + offsetX
+                                                    val right = if (uiState.isFrontCamera) previewWidth - ((rect.left * scale) + offsetX) else (rect.right * scale) + offsetX
+                                                    val top = (rect.top * scale) + offsetY
+                                                    val bottom = (rect.bottom * scale) + offsetY
+                                                    
+                                                    if (tapOffset.x >= left - touchPadding && tapOffset.x <= right + touchPadding &&
+                                                        tapOffset.y >= top - touchPadding && tapOffset.y <= bottom + touchPadding) {
+                                                        viewModel.selectBarcodeFromMultiple(barcode)
+                                                        return@detectTapGestures
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                            ) {
+                                val primaryColor = androidx.compose.ui.graphics.Color(0xFF00E676)
+                                for (barcode in multipleBarcodes) {
+                                    barcode.boundingBox?.let { rect ->
+                                        val left = if (uiState.isFrontCamera) previewWidth - ((rect.right * scale) + offsetX) else (rect.left * scale) + offsetX
+                                        val right = if (uiState.isFrontCamera) previewWidth - ((rect.left * scale) + offsetX) else (rect.right * scale) + offsetX
+                                        val top = (rect.top * scale) + offsetY
+                                        val bottom = (rect.bottom * scale) + offsetY
+                                        
+                                        val width = right - left
+                                        val height = bottom - top
+                                        
+                                        drawRoundRect(
+                                            color = primaryColor,
+                                            topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                                            size = androidx.compose.ui.geometry.Size(width, height),
+                                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(16f, 16f),
+                                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 6f)
+                                        )
+                                        drawCircle(
+                                            color = primaryColor,
+                                            radius = 12f,
+                                            center = androidx.compose.ui.geometry.Offset(left + width/2, top + height/2)
+                                        )
+                                        drawCircle(
+                                            color = primaryColor.copy(alpha = 0.3f),
+                                            radius = 24f,
+                                            center = androidx.compose.ui.geometry.Offset(left + width/2, top + height/2)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     Column(
                         modifier = Modifier
@@ -619,6 +706,47 @@ fun ScannerScreen(
                 com.scannerpro.lectorqr.presentation.ui.components.BannerAdView(
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
+
+
+                // --- Multi-Barcode Selection Bottom Sheet ---
+                val multipleBarcodes = uiState.multipleBarcodesDetected
+                if (multipleBarcodes != null) {
+                    @OptIn(ExperimentalMaterial3Api::class)
+                    ModalBottomSheet(
+                        onDismissRequest = { viewModel.cancelMultiBarcodeSelection() },
+                        scrimColor = Color.Transparent, // Let the AR dots be visible behind the sheet
+                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
+                            Text(
+                                text = "Múltiples Códigos Detectados",
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+                                fontSize = 20.sp
+                            )
+                            androidx.compose.foundation.lazy.LazyColumn(
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)
+                            ) {
+                                items(multipleBarcodes) { barcode ->
+                                    val typeName = stringResource(com.scannerpro.lectorqr.util.BarcodeTypeUtils.getTypeNameRes(barcode.valueType))
+                                    ListItem(
+                                        headlineContent = { Text(barcode.displayValue ?: typeName, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                                        supportingContent = { Text(typeName) },
+                                        leadingContent = {
+                                            Icon(
+                                                imageVector = com.scannerpro.lectorqr.util.BarcodeTypeUtils.getIconForType(barcode.valueType),
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        },
+                                        modifier = Modifier.clickable { viewModel.selectBarcodeFromMultiple(barcode) }
+                                    )
+                                    HorizontalDivider()
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // --- Permission Dialogs ---
                 if (showRationaleDialog) {

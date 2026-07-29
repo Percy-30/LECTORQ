@@ -5,7 +5,20 @@ import android.content.Context
 import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import com.android.billingclient.api.*
+import com.android.billingclient.api.AcknowledgePurchaseParams
+import com.android.billingclient.api.BillingClient
+import com.android.billingclient.api.BillingClientStateListener
+import com.android.billingclient.api.BillingFlowParams
+import com.android.billingclient.api.BillingResult
+import com.android.billingclient.api.PendingPurchasesParams
+import com.android.billingclient.api.ProductDetails
+import com.android.billingclient.api.ProductDetailsResponseListener
+import com.android.billingclient.api.Purchase
+import com.android.billingclient.api.PurchasesResponseListener
+import com.android.billingclient.api.PurchasesUpdatedListener
+import com.android.billingclient.api.QueryProductDetailsParams
+import com.android.billingclient.api.QueryProductDetailsResult
+import com.android.billingclient.api.QueryPurchasesParams
 import com.scannerpro.lectorqr.domain.repository.ISettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,14 +37,16 @@ class BillingManager(
     
     private val billingClient by lazy {
         BillingClient.newBuilder(activity)
-            .setListener { billingResult, purchases ->
-                if (billingResult.responseCode == BillingClient.BillingResponseCode.OK && purchases != null) {
-                    handlePurchases(purchases)
-                } else {
-                    Log.e(TAG, "Compra no completada: ${billingResult.debugMessage}")
-                    purchaseListener?.invoke(false)
+            .setListener(object : PurchasesUpdatedListener {
+                override fun onPurchasesUpdated(billingResult: BillingResult, purchases: MutableList<Purchase>?) {
+                    if (billingResult.responseCode == BillingClient.BillingResponseCode.OK && purchases != null) {
+                        handlePurchases(purchases)
+                    } else {
+                        Log.e(TAG, "Compra no completada: ${billingResult.debugMessage}")
+                        purchaseListener?.invoke(false)
+                    }
                 }
-            }
+            })
             .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
             .build()
     }
@@ -78,22 +93,26 @@ class BillingManager(
             .setProductType(BillingClient.ProductType.INAPP)
             .build()
 
-        billingClient.queryPurchasesAsync(inAppParams) { billingResult, purchasesList ->
-            if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-                handlePurchases(purchasesList)
+        billingClient.queryPurchasesAsync(inAppParams, object : PurchasesResponseListener {
+            override fun onQueryPurchasesResponse(billingResult: BillingResult, purchases: MutableList<Purchase>) {
+                if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+                    handlePurchases(purchases)
+                }
             }
-        }
+        })
 
         // Query Subscriptions
         val subParams = QueryPurchasesParams.newBuilder()
             .setProductType(BillingClient.ProductType.SUBS)
             .build()
 
-        billingClient.queryPurchasesAsync(subParams) { billingResult, purchasesList ->
-            if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-                handlePurchases(purchasesList)
+        billingClient.queryPurchasesAsync(subParams, object : PurchasesResponseListener {
+            override fun onQueryPurchasesResponse(billingResult: BillingResult, purchases: MutableList<Purchase>) {
+                if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+                    handlePurchases(purchases)
+                }
             }
-        }
+        })
     }
 
     private fun handlePurchases(purchases: List<Purchase>) {
@@ -155,48 +174,57 @@ class BillingManager(
             BillingClient.ProductType.INAPP
         }
 
-        val productList = listOf(
-            QueryProductDetailsParams.Product.newBuilder()
-                .setProductId(productId)
-                .setProductType(productType)
-                .build()
-        )
+        val product = QueryProductDetailsParams.Product.newBuilder()
+            .setProductId(productId)
+            .setProductType(productType)
+            .build()
+
+        val productList = java.util.ArrayList<QueryProductDetailsParams.Product>()
+        productList.add(product)
 
         val params = QueryProductDetailsParams.newBuilder()
             .setProductList(productList)
             .build()
 
-        billingClient.queryProductDetailsAsync(params) { billingResult, productDetailsList ->
-            if (billingResult.responseCode == BillingClient.BillingResponseCode.OK &&
-                productDetailsList != null &&
-                productDetailsList.isNotEmpty()
+        billingClient.queryProductDetailsAsync(params, object : ProductDetailsResponseListener {
+            override fun onProductDetailsResponse(
+                billingResult: BillingResult,
+                result: QueryProductDetailsResult
             ) {
-                val productDetails = productDetailsList[0]
-                val productDetailsParams = BillingFlowParams.ProductDetailsParams.newBuilder()
-                    .setProductDetails(productDetails)
+                val productDetailsList = result.productDetailsList
+                if (billingResult.responseCode == BillingClient.BillingResponseCode.OK &&
+                    productDetailsList.isNotEmpty()
+                ) {
+                    val productDetails = productDetailsList[0]
+                    val productDetailsParams = BillingFlowParams.ProductDetailsParams.newBuilder()
+                        .setProductDetails(productDetails)
 
-                // For subscriptions, we must specify an offerToken (picking the first available one)
-                if (productType == BillingClient.ProductType.SUBS) {
-                    productDetails.subscriptionOfferDetails?.firstOrNull()?.let {
-                        productDetailsParams.setOfferToken(it.offerToken)
+                    // For subscriptions, we must specify an offerToken (picking the first available one)
+                    if (productType == BillingClient.ProductType.SUBS) {
+                        productDetails.subscriptionOfferDetails?.firstOrNull()?.let {
+                            productDetailsParams.setOfferToken(it.offerToken)
+                        }
                     }
-                }
 
-                val flowParams = BillingFlowParams.newBuilder()
-                    .setProductDetailsParamsList(listOf(productDetailsParams.build()))
-                    .build()
+                    val flowParamsList = java.util.ArrayList<BillingFlowParams.ProductDetailsParams>()
+                    flowParamsList.add(productDetailsParams.build())
 
-                val launchResult = billingClient.launchBillingFlow(activity, flowParams)
-                if (launchResult.responseCode != BillingClient.BillingResponseCode.OK) {
+                    val flowParams = BillingFlowParams.newBuilder()
+                        .setProductDetailsParamsList(flowParamsList)
+                        .build()
+
+                    val launchResult = billingClient.launchBillingFlow(activity, flowParams)
+                    if (launchResult.responseCode != BillingClient.BillingResponseCode.OK) {
+                        listener(false)
+                        purchaseListener = null
+                    }
+                } else {
+                    Log.e(TAG, "Error obteniendo detalles del producto: ${billingResult.debugMessage}")
                     listener(false)
                     purchaseListener = null
                 }
-            } else {
-                Log.e(TAG, "Error obteniendo detalles del producto: ${billingResult.debugMessage}")
-                // Si falla en producción porque el ID no existe en la consola, intentamos el de prueba si estamos en desarrollo
-                launchTestPurchaseFlow(plan, listener)
             }
-        }
+        })
     }
 
     fun launchTestPurchaseFlow(plan: com.scannerpro.lectorqr.domain.model.PremiumPlan? = null, listener: (Boolean) -> Unit) {
@@ -213,44 +241,51 @@ class BillingManager(
 
         purchaseListener = listener
 
-        val productList = listOf(
-            QueryProductDetailsParams.Product.newBuilder()
-                .setProductId("android.test.purchased")
-                .setProductType(BillingClient.ProductType.INAPP)
-                .build()
-        )
+        val product = QueryProductDetailsParams.Product.newBuilder()
+            .setProductId("android.test.purchased")
+            .setProductType(BillingClient.ProductType.INAPP)
+            .build()
+
+        val productList = java.util.ArrayList<QueryProductDetailsParams.Product>()
+        productList.add(product)
 
         val params = QueryProductDetailsParams.newBuilder()
             .setProductList(productList)
             .build()
 
-        billingClient.queryProductDetailsAsync(params) { billingResult, productDetailsList ->
-            if (billingResult.responseCode == BillingClient.BillingResponseCode.OK &&
-                productDetailsList != null &&
-                productDetailsList.isNotEmpty()
+        billingClient.queryProductDetailsAsync(params, object : ProductDetailsResponseListener {
+            override fun onProductDetailsResponse(
+                billingResult: BillingResult,
+                result: QueryProductDetailsResult
             ) {
-                val productDetails = productDetailsList[0]
+                val productDetailsList = result.productDetailsList
+                if (billingResult.responseCode == BillingClient.BillingResponseCode.OK &&
+                    productDetailsList.isNotEmpty()
+                ) {
+                    val productDetails = productDetailsList[0]
 
-                val flowParams = BillingFlowParams.newBuilder()
-                    .setProductDetailsParamsList(
-                        listOf(
-                            BillingFlowParams.ProductDetailsParams.newBuilder()
-                                .setProductDetails(productDetails)
-                                .build()
-                        )
+                    val detailsParamsList = java.util.ArrayList<BillingFlowParams.ProductDetailsParams>()
+                    detailsParamsList.add(
+                        BillingFlowParams.ProductDetailsParams.newBuilder()
+                            .setProductDetails(productDetails)
+                            .build()
                     )
-                    .build()
 
-                billingClient.launchBillingFlow(activity, flowParams)
-            } else {
-                // Si falla la consulta a Google Play (ej. sin internet o no logueado), forzamos localmente para desarrollo
-                scope.launch {
-                    settingsRepository.setManualPremium(true)
-                    _isPremium.postValue(true)
-                    listener(true)
+                    val flowParams = BillingFlowParams.newBuilder()
+                        .setProductDetailsParamsList(detailsParamsList)
+                        .build()
+
+                    billingClient.launchBillingFlow(activity, flowParams)
+                } else {
+                    // Si falla la consulta a Google Play (ej. sin internet o no logueado), forzamos localmente para desarrollo
+                    scope.launch {
+                        settingsRepository.setManualPremium(true)
+                        _isPremium.postValue(true)
+                        listener(true)
+                    }
                 }
             }
-        }
+        })
     }
 
     fun resetPremiumStatus(listener: (Boolean) -> Unit) {
@@ -282,20 +317,30 @@ class BillingManager(
 
         if (subProductList.isNotEmpty()) {
             val params = QueryProductDetailsParams.newBuilder().setProductList(subProductList).build()
-            billingClient.queryProductDetailsAsync(params) { _, detailsList ->
-                detailsList.forEach { details ->
-                    _productDetailsMap.update { it + (details.productId to details) }
+            billingClient.queryProductDetailsAsync(params, object : ProductDetailsResponseListener {
+                override fun onProductDetailsResponse(
+                    billingResult: BillingResult,
+                    result: QueryProductDetailsResult
+                ) {
+                    result.productDetailsList.forEach { details ->
+                        _productDetailsMap.update { it + (details.productId to details) }
+                    }
                 }
-            }
+            })
         }
 
         if (inAppProductList.isNotEmpty()) {
             val params = QueryProductDetailsParams.newBuilder().setProductList(inAppProductList).build()
-            billingClient.queryProductDetailsAsync(params) { _, detailsList ->
-                detailsList.forEach { details ->
-                    _productDetailsMap.update { it + (details.productId to details) }
+            billingClient.queryProductDetailsAsync(params, object : ProductDetailsResponseListener {
+                override fun onProductDetailsResponse(
+                    billingResult: BillingResult,
+                    result: QueryProductDetailsResult
+                ) {
+                    result.productDetailsList.forEach { details ->
+                        _productDetailsMap.update { it + (details.productId to details) }
+                    }
                 }
-            }
+            })
         }
     }
 

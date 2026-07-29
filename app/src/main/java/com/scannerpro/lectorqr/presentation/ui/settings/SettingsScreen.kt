@@ -327,6 +327,7 @@ fun SettingsScreen(
                 ) { onBack(); onMenuClick() }
             }
 
+
             item { Spacer(Modifier.height(80.dp)) }
         }
 

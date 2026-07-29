@@ -9,17 +9,10 @@ import com.google.mlkit.vision.common.InputImage
 
 class BarcodeAnalyzer(
     private val scanner: BarcodeScanner,
-    private val onBarcodeDetected: (com.google.mlkit.vision.barcode.common.Barcode, android.graphics.Bitmap?) -> Unit
+    private val onBarcodesDetected: (List<com.google.mlkit.vision.barcode.common.Barcode>, android.graphics.Bitmap?, Int, Int) -> Unit
 ) : ImageAnalysis.Analyzer {
-
-    private var isDetected = false
-
     @OptIn(ExperimentalGetImage::class)
     override fun analyze(imageProxy: ImageProxy) {
-        if (isDetected) {
-            imageProxy.close()
-            return
-        }
 
         val mediaImage = imageProxy.image
         if (mediaImage != null) {
@@ -27,12 +20,10 @@ class BarcodeAnalyzer(
             
             scanner.process(image)
                 .addOnSuccessListener { barcodes ->
-                    if (barcodes.isNotEmpty() && !isDetected) {
-                        isDetected = true
-                        val barcode = barcodes[0]
+                    if (barcodes.isNotEmpty()) {
                         
                         // Capture bitmap safely (before proxy is closed)
-                        // Rotate and crop bitmap safely
+                        // Rotate and crop bitmap safely based on the first barcode (or overall bounding box)
                         val rotation = imageProxy.imageInfo.rotationDegrees
                         val fullBitmap = try { imageProxy.toBitmap() } catch (e: Exception) { null }
                         val rotatedBitmap = fullBitmap?.let { src ->
@@ -44,10 +35,10 @@ class BarcodeAnalyzer(
                             }
                         }
 
+                        // For multi-barcode, we just pass the full rotated bitmap, or crop to the first one for backwards compatibility
                         val croppedBitmap = rotatedBitmap?.let { bitmap ->
-                            barcode.boundingBox?.let { rect ->
+                            barcodes.firstOrNull()?.boundingBox?.let { rect ->
                                 try {
-                                    // Add padding for a "Quiet Zone" (approx 15%)
                                     val paddingW = (rect.width() * 0.15f).toInt()
                                     val paddingH = (rect.height() * 0.15f).toInt()
                                     
@@ -69,7 +60,10 @@ class BarcodeAnalyzer(
                                 }
                             } ?: bitmap
                         }
-                        onBarcodeDetected(barcode, croppedBitmap)
+                        val sourceWidth = if (rotation == 90 || rotation == 270) imageProxy.height else imageProxy.width
+                        val sourceHeight = if (rotation == 90 || rotation == 270) imageProxy.width else imageProxy.height
+                        
+                        onBarcodesDetected(barcodes, croppedBitmap, sourceWidth, sourceHeight)
                     }
                 }
                 .addOnCompleteListener {

@@ -45,6 +45,9 @@ class ScannerViewModel @Inject constructor(
     private val _interstitialTrigger = MutableSharedFlow<Unit>()
     val interstitialTrigger = _interstitialTrigger.asSharedFlow()
     private var scanCount = 0
+    
+    private var lastScanTime = 0L
+    private val SCAN_DELAY_MS = 1500L
 
     init {
         observeScanResults()
@@ -127,69 +130,186 @@ class ScannerViewModel @Inject constructor(
         }
     }
 
-    fun handleBarcode(barcode: com.google.mlkit.vision.barcode.common.Barcode, bitmap: android.graphics.Bitmap?) {
-        viewModelScope.launch {
-            val keepDuplicates = settingsRepository.isKeepDuplicatesEnabled.firstOrNull() ?: true
-            if (!keepDuplicates) {
-                // Check if already exists in history (approximate check based on rawValue and recent timestamp)
-                // This is a simple implementation. A better one would be in the repository or DAO.
-                // For now, let's just proceed or skip if it's the exact same as lastResult
-                if (_uiState.value.lastResult?.rawValue == barcode.rawValue) {
-                    return@launch
-                }
+    fun handleBarcodes(
+        barcodes: List<com.google.mlkit.vision.barcode.common.Barcode>, 
+        bitmap: android.graphics.Bitmap?, 
+        width: Int, 
+        height: Int,
+        previewWidth: Float = 0f,
+        previewHeight: Float = 0f
+    ) {
+        if (barcodes.isEmpty()) return
+        
+        // Filter barcodes that intersect the center viewfinder box (70% of screen width)
+        val filteredBarcodes = if (previewWidth > 0 && previewHeight > 0) {
+            val scale = maxOf(previewWidth / width.toFloat(), previewHeight / height.toFloat())
+            val offsetX = (previewWidth - width * scale) / 2
+            val offsetY = (previewHeight - height * scale) / 2
+            
+            val boxSize = previewWidth * 0.7f
+            val boxLeft = (previewWidth - boxSize) / 2
+            val boxTop = (previewHeight - boxSize) / 2
+            val boxRight = boxLeft + boxSize
+            val boxBottom = boxTop + boxSize
+            val isFrontCamera = _uiState.value.isFrontCamera
+            
+            barcodes.filter { barcode ->
+                barcode.boundingBox?.let { rect ->
+                    val rawLeft = (rect.left * scale) + offsetX
+                    val rawRight = (rect.right * scale) + offsetX
+                    val top = (rect.top * scale) + offsetY
+                    val bottom = (rect.bottom * scale) + offsetY
+                    
+                    val left = if (isFrontCamera) previewWidth - rawRight else rawLeft
+                    val right = if (isFrontCamera) previewWidth - rawLeft else rawRight
+                    
+                    val centerX = left + (right - left) / 2
+                    val centerY = top + (bottom - top) / 2
+                    
+                    // The barcode's center MUST be inside the blue box
+                    (centerX >= boxLeft && centerX <= boxRight && centerY >= boxTop && centerY <= boxBottom)
+                } ?: true // Keep if no bounding box
             }
+        } else {
+            barcodes
+        }
 
-            val isAddToHistory = settingsRepository.isAddToHistoryEnabled.firstOrNull() ?: true
-            if (isAddToHistory) {
-                repository.onBarcodeDetected(barcode, bitmap)
-            } else if (!_uiState.value.isBatchModeActive) {
-                // If history is disabled and NOT in batch mode, we still want to show the result overlay
-                val result = repository.processBarcodeManually(barcode, bitmap)
-                if (result != null) {
-                    _scanResultUiState.update { 
-                        it.copy(
-                            result = result,
-                            isFavorite = result.isFavorite,
-                            customName = result.customName ?: "Texto",
-                            renameInput = result.customName ?: "Texto",
-                            isLoading = false
-                        )
-                    }
-                }
-            }
-            
+        if (filteredBarcodes.isEmpty()) return
+        
+        if (_scanResultUiState.value.result != null) return
+        if (_uiState.value.multipleBarcodesDetected != null) return
+        
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastScanTime < SCAN_DELAY_MS) return
+        lastScanTime = currentTime
+        
+        viewModelScope.launch {
             if (_uiState.value.isBatchModeActive) {
-                viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                    val scannedLabel = context.getString(R.string.scanned_label)
-                    val codeLabel = context.getString(R.string.type_text)
-                    android.widget.Toast.makeText(context, "$scannedLabel ${barcode.displayValue ?: codeLabel}", android.widget.Toast.LENGTH_SHORT).show()
-                }
-            }
-            
-            // Trigger feedback
-            if (settingsRepository.isBeepEnabled.firstOrNull() == true) {
-                playBeep()
-            }
-            if (settingsRepository.isVibrateEnabled.firstOrNull() == true) {
-                vibrate()
-            }
-            
-            // Copy to clipboard if enabled
-            if (settingsRepository.isCopyToClipboardEnabled.firstOrNull() == true) {
-                val formattedValue = BarcodeTypeUtils.getFormattedValue(context, barcode.valueType, barcode.rawValue)
-                val clipboardManager = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clipboardManager.setPrimaryClip(android.content.ClipData.newPlainText("QR Code", formattedValue))
-            }
-            
-            // Open URL automatically if enabled
-            if (settingsRepository.isOpenUrlAutomaticallyEnabled.firstOrNull() == true) {
-                barcode.url?.url?.let { url ->
-                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
-                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                // Batch Mode: Guardar todos automáticamente
+                val keepDuplicates = settingsRepository.isKeepDuplicatesEnabled.firstOrNull() ?: true
+                val isAddToHistory = settingsRepository.isAddToHistoryEnabled.firstOrNull() ?: true
+                
+                var newCount = 0
+                for (barcode in filteredBarcodes) {
+                    if (!keepDuplicates && _uiState.value.lastResult?.rawValue == barcode.rawValue) {
+                        continue
                     }
-                    context.startActivity(intent)
+                    if (isAddToHistory) {
+                        repository.onBarcodeDetected(barcode, null)
+                    }
+                    newCount++
+                }
+                
+                if (newCount > 0) {
+                    viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                        val scannedLabel = context.getString(R.string.scanned_label)
+                        android.widget.Toast.makeText(context, "$scannedLabel $newCount códigos", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    triggerScanFeedback()
+                }
+            } else {
+                // Normal Mode
+                if (filteredBarcodes.size == 1) {
+                    handleSingleBarcode(filteredBarcodes.first(), bitmap)
+                } else {
+                    // Múltiples códigos: Mostrar diálogo de selección
+                    _uiState.update { it.copy(multipleBarcodesDetected = filteredBarcodes, multiBarcodeBitmap = bitmap, sourceImageWidth = width, sourceImageHeight = height) }
+                    triggerScanFeedback()
                 }
             }
+        }
+    }
+
+    fun selectBarcodeFromMultiple(barcode: com.google.mlkit.vision.barcode.common.Barcode) {
+        val allBarcodes = _uiState.value.multipleBarcodesDetected ?: return
+        val bitmap = _uiState.value.multiBarcodeBitmap
+        val otherBarcodes = allBarcodes.filter { it !== barcode }
+        
+        Log.d("ScannerVM", "selectBarcodeFromMultiple: allBarcodes size = ${allBarcodes.size}, otherBarcodes size = ${otherBarcodes.size}")
+        
+        _scanResultUiState.update { it.copy(otherBarcodes = otherBarcodes) }
+        _uiState.update { it.copy(multipleBarcodesDetected = null, multiBarcodeBitmap = null) }
+        
+        viewModelScope.launch {
+            handleSingleBarcode(barcode, bitmap)
+        }
+    }
+
+    fun selectOtherBarcode(barcode: com.google.mlkit.vision.barcode.common.Barcode) {
+        val otherBarcodes = _scanResultUiState.value.otherBarcodes.filter { it !== barcode }
+        
+        _scanResultUiState.update { it.copy(otherBarcodes = otherBarcodes) }
+        
+        viewModelScope.launch {
+            handleSingleBarcode(barcode, null)
+        }
+    }
+
+    fun cancelMultiBarcodeSelection() {
+        _uiState.update { it.copy(multipleBarcodesDetected = null, multiBarcodeBitmap = null) }
+    }
+
+    private suspend fun handleSingleBarcode(barcode: com.google.mlkit.vision.barcode.common.Barcode, bitmap: android.graphics.Bitmap?) {
+        val keepDuplicates = settingsRepository.isKeepDuplicatesEnabled.firstOrNull() ?: true
+        if (!keepDuplicates) {
+            if (_uiState.value.lastResult?.rawValue == barcode.rawValue) {
+                return
+            }
+        }
+
+        val isAddToHistory = settingsRepository.isAddToHistoryEnabled.firstOrNull() ?: true
+        if (isAddToHistory) {
+            repository.onBarcodeDetected(barcode, bitmap)
+        } else {
+            val result = repository.processBarcodeManually(barcode, bitmap)
+            if (result != null) {
+                _scanResultUiState.update { 
+                    it.copy(
+                        result = result,
+                        isFavorite = result.isFavorite,
+                        customName = result.customName ?: "Texto",
+                        renameInput = result.customName ?: "Texto",
+                        isLoading = false
+                    )
+                }
+            }
+        }
+        
+        triggerScanFeedback()
+        
+        // Copy to clipboard if enabled
+        if (settingsRepository.isCopyToClipboardEnabled.firstOrNull() == true) {
+            val formattedValue = BarcodeTypeUtils.getFormattedValue(context, barcode.valueType, barcode.rawValue)
+            val clipboardManager = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            clipboardManager.setPrimaryClip(android.content.ClipData.newPlainText("QR Code", formattedValue))
+        }
+        
+        // Open URL automatically if enabled
+        if (settingsRepository.isOpenUrlAutomaticallyEnabled.firstOrNull() == true) {
+            val url = barcode.url?.url
+            if (!url.isNullOrBlank()) {
+                var finalUrl = url
+                if (!finalUrl.startsWith("http://", ignoreCase = true) && !finalUrl.startsWith("https://", ignoreCase = true)) {
+                    finalUrl = "http://$finalUrl"
+                }
+                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(finalUrl)).apply {
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                try {
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    Log.e("ScannerVM", "No app found to handle URL: $finalUrl", e)
+                }
+            }
+        }
+    }
+
+    private suspend fun triggerScanFeedback() {
+        if (settingsRepository.isBeepEnabled.firstOrNull() == true) {
+            playBeep()
+        }
+        if (settingsRepository.isVibrateEnabled.firstOrNull() == true) {
+            vibrate()
         }
     }
 
@@ -261,19 +381,13 @@ class ScannerViewModel @Inject constructor(
         android.util.Log.e("ScannerVM", "scanFromGallery called with uri: $uri")
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            // The repository emits to flow, but we also capture the result here for instant manual update
             try {
                 val result = repository.processImageFromGallery(uri)
-                android.util.Log.e("ScannerVM", "scanFromGallery repository returned: $result")
                 if (result != null) {
-                    _scanResultUiState.update { 
-                        it.copy(
-                            result = result,
-                            isFavorite = result.isFavorite,
-                            customName = result.customName ?: "Texto",
-                            renameInput = result.customName ?: "Texto",
-                            isLoading = false
-                        )
+                    handleBarcodes(result.first, result.second, result.second?.width ?: 0, result.second?.height ?: 0)
+                } else {
+                    viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "No se encontraron códigos", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 }
             } catch (e: Exception) {
@@ -306,6 +420,12 @@ class ScannerViewModel @Inject constructor(
 
     fun onGalleryPickerLaunched() {
         _uiState.update { it.copy(isGalleryRequested = false) }
+    }
+
+    fun setManualPremium(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setManualPremium(enabled)
+        }
     }
 
     fun onResultHandled() {
@@ -372,11 +492,13 @@ class ScannerViewModel @Inject constructor(
 
     fun saveQrToGallery() {
         viewModelScope.launch {
-            val bitmap = _scanResultUiState.value.qrBitmap ?: _scanResultUiState.value.result?.imagePath?.let {
-                try {
-                    android.graphics.BitmapFactory.decodeFile(it)
-                } catch (e: Exception) {
-                    null
+            val bitmap = _scanResultUiState.value.qrBitmap ?: _scanResultUiState.value.result?.imagePath?.let { path ->
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        android.graphics.BitmapFactory.decodeFile(path)
+                    } catch (e: Exception) {
+                        null
+                    }
                 }
             } ?: return@launch
             

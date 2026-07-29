@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.Flow
 
 interface IScannerRepository {
     fun startScanning(): Flow<BarcodeResult>
-    suspend fun processImageFromGallery(uri: Uri): BarcodeResult?
+    suspend fun processImageFromGallery(uri: Uri): Pair<List<com.google.mlkit.vision.barcode.common.Barcode>, android.graphics.Bitmap?>?
     suspend fun onBarcodeDetected(barcode: com.google.mlkit.vision.barcode.common.Barcode, bitmap: android.graphics.Bitmap?): Long
     fun toggleFlash(isEnabled: Boolean)
     fun flipCamera()

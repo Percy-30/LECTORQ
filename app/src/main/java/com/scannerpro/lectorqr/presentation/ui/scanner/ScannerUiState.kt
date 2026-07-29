@@ -17,5 +17,9 @@ data class ScannerUiState(
     val isKeepDuplicatesEnabled: Boolean = true,
     val minZoomRatio: Float = 1.0f,
     val maxZoomRatio: Float = 10.0f,
-    val isPremium: Boolean = false
+    val isPremium: Boolean = false,
+    val multipleBarcodesDetected: List<com.google.mlkit.vision.barcode.common.Barcode>? = null,
+    val multiBarcodeBitmap: android.graphics.Bitmap? = null,
+    val sourceImageWidth: Int = 0,
+    val sourceImageHeight: Int = 0
 )

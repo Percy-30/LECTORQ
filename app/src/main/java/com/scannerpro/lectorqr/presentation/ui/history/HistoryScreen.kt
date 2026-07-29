@@ -479,19 +479,18 @@ fun HistoryItem(
             modifier = Modifier.size(40.dp),
             contentAlignment = Alignment.Center
         ) {
-            var bitmapLoaded = false
+            var bitmapLoaded by remember { mutableStateOf(false) }
             if (isPremium && scan.imagePath != null) {
-                val bitmap = try {
-                    android.graphics.BitmapFactory.decodeFile(scan.imagePath)
-                } catch(e: Exception) {
-                    android.util.Log.e("HistoryScreen", "Error loading bitmap from path: ${scan.imagePath}", e)
-                    null
+                var thumbnailBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+                
+                LaunchedEffect(scan.imagePath) {
+                    thumbnailBitmap = com.scannerpro.lectorqr.util.BitmapUtils.decodeSampledBitmapFromFile(scan.imagePath)
                 }
                 
-                if (bitmap != null) {
+                if (thumbnailBitmap != null) {
                     bitmapLoaded = true
                     androidx.compose.foundation.Image(
-                        bitmap = bitmap.asImageBitmap(),
+                        bitmap = thumbnailBitmap!!.asImageBitmap(),
                         contentDescription = null,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = androidx.compose.ui.layout.ContentScale.Fit

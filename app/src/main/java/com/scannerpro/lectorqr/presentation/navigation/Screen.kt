@@ -4,6 +4,7 @@ sealed class Screen(val route: String) {
     object Scanner : Screen("scanner")
     object QrTypeSelection : Screen("qr_type_selection")
     object CreateQr : Screen("create_qr")
+    object CreateDynamicQr : Screen("create_dynamic_qr")
     object CreateContact : Screen("create_contact")
     object CreateUrl : Screen("create_url")
     object CreateText : Screen("create_text")

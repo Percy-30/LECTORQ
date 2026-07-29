@@ -19,10 +19,7 @@ import com.scannerpro.lectorqr.util.BarcodeTypeUtils
 import com.scannerpro.lectorqr.util.FileUtils
 
 import com.scannerpro.lectorqr.domain.usecase.ToggleFavoriteUseCase
-import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
+import java.util.Calendar
 
 data class HistoryUiState(
     val groupedScans: Map<String, List<BarcodeResult>> = emptyMap(),
@@ -89,20 +86,32 @@ class HistoryViewModel @Inject constructor(
     }
 
     private fun groupHistory(scans: List<BarcodeResult>): Map<String, List<BarcodeResult>> {
-        val today = LocalDate.now()
-        val yesterday = today.minusDays(1)
+        val today = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val yesterday = Calendar.getInstance().apply {
+            timeInMillis = today.timeInMillis
+            add(Calendar.DAY_OF_YEAR, -1)
+        }
         
         return scans.groupBy { result ->
-            val date = Instant.ofEpochMilli(result.timestamp)
-                .atZone(ZoneId.systemDefault())
-                .toLocalDate()
+            val date = Calendar.getInstance().apply {
+                timeInMillis = result.timestamp
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
             
-            when (date) {
-                today -> "Hoy"
-                yesterday -> "Ayer"
+            when {
+                date.timeInMillis == today.timeInMillis -> "Hoy"
+                date.timeInMillis == yesterday.timeInMillis -> "Ayer"
                 else -> {
-                    val formatter = DateTimeFormatter.ofPattern("d MMM. yyyy", java.util.Locale.getDefault())
-                    date.format(formatter)
+                    val formatter = java.text.SimpleDateFormat("d MMM. yyyy", java.util.Locale.getDefault())
+                    formatter.format(java.util.Date(result.timestamp))
                 }
             }
         }

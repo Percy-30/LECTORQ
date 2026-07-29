@@ -41,6 +41,7 @@ fun QrTypeSelectionScreen(
     val uiState by viewModel.uiState.collectAsState()
     val qrTypes = listOf(
         QrType("my_qr", R.string.drawer_my_qr, Icons.Default.Person, isSpecial = true),
+        QrType("dynamic_qr", R.string.type_dynamic_qr, Icons.Default.Star, isSpecial = true),
         QrType("url", R.string.type_url, Icons.Default.Link),
         QrType("text", R.string.type_text, Icons.Default.TextFields),
         QrType("contact", R.string.type_contact, Icons.Default.Person),
@@ -105,6 +106,12 @@ fun QrTypeSelectionScreen(
                         onClick = { onTypeSelected(qrTypes[0].id) }
                     )
                     Divider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
+                    
+                    QrTypeItem(
+                        qrType = qrTypes[1],
+                        onClick = { onTypeSelected(qrTypes[1].id) }
+                    )
+                    Divider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
                 }
 
                 // Header General Types
@@ -118,7 +125,7 @@ fun QrTypeSelectionScreen(
                     )
                 }
 
-                items(qrTypes.drop(1)) { type ->
+                items(qrTypes.drop(2)) { type ->
                     QrTypeItem(
                         qrType = type,
                         onClick = { onTypeSelected(type.id) }

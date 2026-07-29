@@ -70,6 +70,7 @@
     <string name="settings_camera_recommended">Cámara 1 - recomendado</string>
     <string name="settings_camera_n">Cámara %d</string>
     <string name="settings_search_engine">Buscador</string>
+    <string name="settings_search_country">Buscar país</string>
     <string name="settings_premium_active">Lector QR Pro Premium (Activo)</string>
     <string name="settings_premium">Lector QR Pro Premium</string>
     <string name="settings_thanks_support">Gracias por tu apoyo</string>
@@ -122,6 +123,9 @@
     <string name="type_codabar">Codabar</string>
     <string name="type_datamatrix">Data Matrix</string>
     <string name="type_aztec">Aztec</string>
+
+    <string name="type_dynamic_qr">QR Dinámico (PRO)</string>
+    <string name="dynamic_qr_description">Los códigos QR dinámicos usan una URL corta que puede ser modificada en el futuro (Premium).</string>
     <string name="field_network_name">Nombre de Red: </string>
     <string name="field_security">Seguridad: </string>
     <string name="field_password">Contraseña: </string>

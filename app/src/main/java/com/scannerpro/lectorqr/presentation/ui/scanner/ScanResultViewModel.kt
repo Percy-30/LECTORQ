@@ -26,7 +26,8 @@ data class ScanResultUiState(
     val isLoading: Boolean = false,
     val searchEngine: String = "Google",
     val isAppBrowserEnabled: Boolean = true,
-    val qrBitmap: android.graphics.Bitmap? = null
+    val qrBitmap: android.graphics.Bitmap? = null,
+    val otherBarcodes: List<com.google.mlkit.vision.barcode.common.Barcode> = emptyList()
 )
 
 @HiltViewModel
@@ -286,11 +287,13 @@ class ScanResultViewModel @Inject constructor(
 
     fun saveQrToGallery() {
         viewModelScope.launch {
-            val bitmap = _uiState.value.qrBitmap ?: _uiState.value.result?.imagePath?.let {
-                try {
-                    android.graphics.BitmapFactory.decodeFile(it)
-                } catch (e: Exception) {
-                    null
+            val bitmap = _uiState.value.qrBitmap ?: _uiState.value.result?.imagePath?.let { path ->
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        android.graphics.BitmapFactory.decodeFile(path)
+                    } catch (e: Exception) {
+                        null
+                    }
                 }
             } ?: return@launch
             
